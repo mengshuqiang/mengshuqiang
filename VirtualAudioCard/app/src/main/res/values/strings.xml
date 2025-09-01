@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">虚拟声卡</string>
+    <string name="accessibility_service_description">
+        微信音频辅助服务\n\n
+        此服务用于监听微信的音频事件，以便进行音频处理和增强。\n\n
+        功能包括：\n
+        • 检测语音通话开始/结束\n
+        • 监听语音消息录制\n
+        • 音频质量优化\n\n
+        注意：此服务不会收集或存储任何个人信息。
+    </string>
+</resources>
