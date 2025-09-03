@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB音频设备过滤器 -->
+    <!-- Class 0x01: Audio -->
+    <!-- Subclass 0x01: Audio Control -->
+    <!-- Subclass 0x02: Audio Streaming -->
+    <usb-device class="1" subclass="1" />
+    <usb-device class="1" subclass="2" />
+    
+    <!-- 支持特定厂商的USB音频设备 -->
+    <!-- 可以根据需要添加具体的vendor-id和product-id -->
+    <!-- <usb-device vendor-id="1234" product-id="5678" /> -->
+</resources>
