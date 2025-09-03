@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB音频设备过滤器 -->
+    <!-- Class 1: Audio -->
+    <usb-device class="1" subclass="0" protocol="0" />
+    <usb-device class="1" subclass="1" protocol="0" />
+    <usb-device class="1" subclass="2" protocol="0" />
+    
+    <!-- 常见USB音频设备厂商ID -->
+    <!-- 可根据实际设备添加具体的vendor-id和product-id -->
+    <!-- 例如: <usb-device vendor-id="1234" product-id="5678" /> -->
+</resources>
