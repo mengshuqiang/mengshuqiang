@@ -1,0 +1,19 @@
+{
+	"pages": [
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "同声传译",
+				"navigationBarBackgroundColor": "#7B6FDE",
+				"navigationBarTextStyle": "white"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "white",
+		"navigationBarTitleText": "同声传译",
+		"navigationBarBackgroundColor": "#7B6FDE",
+		"backgroundColor": "#F8F8F8"
+	},
+	"uniIdRouter": {}
+}

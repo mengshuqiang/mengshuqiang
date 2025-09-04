@@ -1,0 +1,337 @@
+/**
+ * 音频处理器
+ * 用于音频数据的处理、降噪、增强等
+ */
+
+export class AudioProcessor {
+	// 音频处理参数
+	private volume: number = 1.0
+	private noiseThreshold: number = 0.1
+	private echoDelay: number = 0.3
+	private echoLevel: number = 0.3
+	
+	// 缓冲区
+	private echoBuffer: Float32Array | null = null
+	private echoBufferIndex: number = 0
+	
+	constructor() {
+		this.init()
+	}
+	
+	/**
+	 * 初始化音频处理器
+	 */
+	private init(): void {
+		// 初始化回声缓冲区（假设44100Hz采样率，0.3秒延迟）
+		const bufferSize = Math.floor(44100 * this.echoDelay)
+		this.echoBuffer = new Float32Array(bufferSize)
+	}
+	
+	/**
+	 * 处理音频数据
+	 */
+	public process(audioData: ArrayBuffer): ArrayBuffer {
+		// 转换为16位PCM样本
+		const samples = this.convertToSamples(audioData)
+		
+		// 应用音频处理链
+		let processedSamples = samples
+		
+		// 1. 降噪处理
+		processedSamples = this.applyNoiseReduction(processedSamples)
+		
+		// 2. 音量调整
+		processedSamples = this.applyVolume(processedSamples)
+		
+		// 3. 均衡器处理
+		processedSamples = this.applyEqualizer(processedSamples)
+		
+		// 4. 动态范围压缩
+		processedSamples = this.applyCompression(processedSamples)
+		
+		// 转换回字节数组
+		return this.convertToByteArray(processedSamples)
+	}
+	
+	/**
+	 * 将字节数组转换为样本数组
+	 */
+	private convertToSamples(audioData: ArrayBuffer): Float32Array {
+		const byteArray = new Uint8Array(audioData)
+		const samples = new Float32Array(byteArray.length / 2)
+		
+		for (let i = 0; i < samples.length; i++) {
+			// 将16位PCM转换为浮点数（-1.0到1.0）
+			const sample = (byteArray[i * 2] | (byteArray[i * 2 + 1] << 8))
+			samples[i] = sample / 32768.0
+		}
+		
+		return samples
+	}
+	
+	/**
+	 * 将样本数组转换回字节数组
+	 */
+	private convertToByteArray(samples: Float32Array): ArrayBuffer {
+		const buffer = new ArrayBuffer(samples.length * 2)
+		const view = new DataView(buffer)
+		
+		for (let i = 0; i < samples.length; i++) {
+			// 将浮点数转换回16位PCM
+			let sample = Math.floor(samples[i] * 32767)
+			
+			// 限制范围
+			sample = Math.max(-32768, Math.min(32767, sample))
+			
+			// 写入16位小端格式
+			view.setInt16(i * 2, sample, true)
+		}
+		
+		return buffer
+	}
+	
+	/**
+	 * 应用降噪处理
+	 */
+	private applyNoiseReduction(samples: Float32Array): Float32Array {
+		const processed = new Float32Array(samples.length)
+		
+		for (let i = 0; i < samples.length; i++) {
+			// 简单的门限降噪
+			if (Math.abs(samples[i]) < this.noiseThreshold) {
+				processed[i] = samples[i] * 0.1 // 衰减噪声
+			} else {
+				processed[i] = samples[i]
+			}
+		}
+		
+		// 应用移动平均滤波器平滑处理
+		return this.applyMovingAverage(processed, 3)
+	}
+	
+	/**
+	 * 应用移动平均滤波器
+	 */
+	private applyMovingAverage(samples: Float32Array, windowSize: number): Float32Array {
+		const filtered = new Float32Array(samples.length)
+		
+		for (let i = 0; i < samples.length; i++) {
+			let sum = 0
+			let count = 0
+			
+			for (let j = -windowSize; j <= windowSize; j++) {
+				const index = i + j
+				if (index >= 0 && index < samples.length) {
+					sum += samples[index]
+					count++
+				}
+			}
+			
+			filtered[i] = sum / count
+		}
+		
+		return filtered
+	}
+	
+	/**
+	 * 应用音量调整
+	 */
+	private applyVolume(samples: Float32Array): Float32Array {
+		const processed = new Float32Array(samples.length)
+		
+		for (let i = 0; i < samples.length; i++) {
+			processed[i] = samples[i] * this.volume
+			
+			// 软限幅防止削波
+			if (processed[i] > 0.95) {
+				processed[i] = 0.95 + (processed[i] - 0.95) * 0.1
+			} else if (processed[i] < -0.95) {
+				processed[i] = -0.95 + (processed[i] + 0.95) * 0.1
+			}
+		}
+		
+		return processed
+	}
+	
+	/**
+	 * 应用均衡器处理
+	 */
+	private applyEqualizer(samples: Float32Array): Float32Array {
+		// 简单的三段均衡器
+		const bassGain = 1.2    // 低频增益
+		const midGain = 1.0     // 中频增益
+		const trebleGain = 1.1  // 高频增益
+		
+		// 这里使用简单的滤波器模拟均衡器效果
+		// 实际应用中应该使用更复杂的IIR或FIR滤波器
+		const processed = new Float32Array(samples.length)
+		
+		for (let i = 1; i < samples.length - 1; i++) {
+			// 简单的差分滤波器
+			const lowFreq = (samples[i - 1] + samples[i] + samples[i + 1]) / 3
+			const highFreq = samples[i] - lowFreq
+			const midFreq = samples[i] * 0.5
+			
+			processed[i] = lowFreq * bassGain + midFreq * midGain + highFreq * trebleGain
+			processed[i] /= 3 // 归一化
+		}
+		
+		// 处理边界
+		processed[0] = samples[0]
+		processed[samples.length - 1] = samples[samples.length - 1]
+		
+		return processed
+	}
+	
+	/**
+	 * 应用动态范围压缩
+	 */
+	private applyCompression(samples: Float32Array): Float32Array {
+		const threshold = 0.7   // 压缩阈值
+		const ratio = 4.0       // 压缩比
+		const attack = 0.003    // 起音时间（秒）
+		const release = 0.1    // 释放时间（秒）
+		
+		const processed = new Float32Array(samples.length)
+		let envelope = 0
+		
+		const attackCoeff = Math.exp(-1 / (44100 * attack))
+		const releaseCoeff = Math.exp(-1 / (44100 * release))
+		
+		for (let i = 0; i < samples.length; i++) {
+			const inputLevel = Math.abs(samples[i])
+			
+			// 更新包络
+			if (inputLevel > envelope) {
+				envelope = inputLevel + (envelope - inputLevel) * attackCoeff
+			} else {
+				envelope = inputLevel + (envelope - inputLevel) * releaseCoeff
+			}
+			
+			// 计算增益
+			let gain = 1.0
+			if (envelope > threshold) {
+				const excess = envelope - threshold
+				const compressedExcess = excess / ratio
+				gain = (threshold + compressedExcess) / envelope
+			}
+			
+			processed[i] = samples[i] * gain
+		}
+		
+		return processed
+	}
+	
+	/**
+	 * 添加回声效果
+	 */
+	public addEcho(samples: Float32Array): Float32Array {
+		if (!this.echoBuffer) return samples
+		
+		const processed = new Float32Array(samples.length)
+		
+		for (let i = 0; i < samples.length; i++) {
+			// 从缓冲区读取延迟的样本
+			const echoSample = this.echoBuffer[this.echoBufferIndex]
+			
+			// 混合原始信号和回声
+			processed[i] = samples[i] + echoSample * this.echoLevel
+			
+			// 将当前样本存入缓冲区
+			this.echoBuffer[this.echoBufferIndex] = samples[i]
+			
+			// 更新缓冲区索引
+			this.echoBufferIndex = (this.echoBufferIndex + 1) % this.echoBuffer.length
+		}
+		
+		return processed
+	}
+	
+	/**
+	 * 设置音量
+	 */
+	public setVolume(volume: number): void {
+		this.volume = Math.max(0, Math.min(2, volume))
+	}
+	
+	/**
+	 * 设置降噪阈值
+	 */
+	public setNoiseThreshold(threshold: number): void {
+		this.noiseThreshold = Math.max(0, Math.min(1, threshold))
+	}
+	
+	/**
+	 * 设置回声参数
+	 */
+	public setEchoParams(delay: number, level: number): void {
+		this.echoDelay = Math.max(0.1, Math.min(1, delay))
+		this.echoLevel = Math.max(0, Math.min(1, level))
+		
+		// 重新初始化回声缓冲区
+		const bufferSize = Math.floor(44100 * this.echoDelay)
+		this.echoBuffer = new Float32Array(bufferSize)
+		this.echoBufferIndex = 0
+	}
+	
+	/**
+	 * 获取音频电平
+	 */
+	public getAudioLevel(samples: Float32Array): number {
+		let sum = 0
+		
+		for (let i = 0; i < samples.length; i++) {
+			sum += samples[i] * samples[i]
+		}
+		
+		const rms = Math.sqrt(sum / samples.length)
+		return rms
+	}
+	
+	/**
+	 * 检测静音
+	 */
+	public isSilent(samples: Float32Array, threshold: number = 0.01): boolean {
+		const level = this.getAudioLevel(samples)
+		return level < threshold
+	}
+	
+	/**
+	 * 应用淡入效果
+	 */
+	public applyFadeIn(samples: Float32Array, duration: number = 0.1): Float32Array {
+		const fadeSamples = Math.floor(44100 * duration)
+		const processed = new Float32Array(samples.length)
+		
+		for (let i = 0; i < samples.length; i++) {
+			if (i < fadeSamples) {
+				const fadeGain = i / fadeSamples
+				processed[i] = samples[i] * fadeGain
+			} else {
+				processed[i] = samples[i]
+			}
+		}
+		
+		return processed
+	}
+	
+	/**
+	 * 应用淡出效果
+	 */
+	public applyFadeOut(samples: Float32Array, duration: number = 0.1): Float32Array {
+		const fadeSamples = Math.floor(44100 * duration)
+		const processed = new Float32Array(samples.length)
+		const fadeStart = samples.length - fadeSamples
+		
+		for (let i = 0; i < samples.length; i++) {
+			if (i >= fadeStart) {
+				const fadeGain = (samples.length - i) / fadeSamples
+				processed[i] = samples[i] * fadeGain
+			} else {
+				processed[i] = samples[i]
+			}
+		}
+		
+		return processed
+	}
+}
