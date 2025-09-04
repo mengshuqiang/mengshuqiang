@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB音频设备类 -->
+    <!-- Class 1: Audio, Subclass 1: Audio Control -->
+    <usb-device class="1" subclass="1" protocol="0" />
+    
+    <!-- 常见USB声卡厂商ID -->
+    <!-- C-Media -->
+    <usb-device vendor-id="3468" />
+    
+    <!-- Texas Instruments -->
+    <usb-device vendor-id="2235" />
+    
+    <!-- Realtek -->
+    <usb-device vendor-id="3034" />
+    
+    <!-- Creative -->
+    <usb-device vendor-id="1054" />
+    
+    <!-- Logitech -->
+    <usb-device vendor-id="1133" />
+    
+    <!-- 绿联常用芯片厂商 -->
+    <usb-device vendor-id="6940" />
+    
+    <!-- Corsair -->
+    <usb-device vendor-id="6940" />
+    
+    <!-- 通用USB音频设备 -->
+    <usb-device />
+</resources>

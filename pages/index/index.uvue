@@ -1,0 +1,454 @@
+<template>
+	<view class="container">
+		<!-- 语言选择区域 -->
+		<view class="language-selector">
+			<view class="language-item" @click="switchLanguage('source')">
+				<text class="language-label">{{ sourceLanguage.label }}</text>
+				<text class="language-name">{{ sourceLanguage.name }}</text>
+			</view>
+			
+			<view class="language-divider"></view>
+			
+			<view class="language-item" @click="switchLanguage('target')">
+				<text class="language-label">{{ targetLanguage.label }}</text>
+				<text class="language-name">{{ targetLanguage.name }}</text>
+			</view>
+		</view>
+		
+		<!-- 录音按钮 -->
+		<view class="record-area">
+			<view 
+				class="record-button" 
+				:class="{'recording': isRecording}"
+				@click="toggleRecording"
+				@touchstart="onRecordStart"
+				@touchend="onRecordEnd"
+				@touchcancel="onRecordEnd">
+				<view class="record-inner"></view>
+			</view>
+			<text class="record-hint" v-if="!isRecording">{{ recordHint }}</text>
+			<text class="record-time" v-else>{{ recordingTime }}</text>
+		</view>
+		
+		<!-- USB状态指示器 -->
+		<view class="usb-status">
+			<view class="status-indicator" :class="{'connected': usbConnected}"></view>
+			<text class="status-text">{{ usbStatusText }}</text>
+		</view>
+		
+		<!-- 音频波形显示区域 -->
+		<view class="waveform-container" v-if="isRecording">
+			<view class="waveform-bar" v-for="(height, index) in waveformData" :key="index" 
+				:style="{height: height + 'px'}"></view>
+		</view>
+	</view>
+</template>
+
+<script>
+import { USBAudioManager } from './usb-audio-manager.uts'
+import { AudioProcessor } from './audio-processor.uts'
+
+export default {
+	data() {
+		return {
+			sourceLanguage: {
+				label: '我的语言',
+				name: '汉语',
+				code: 'zh-CN'
+			},
+			targetLanguage: {
+				label: '对方的语言',
+				name: '英语',
+				code: 'en-US'
+			},
+			isRecording: false,
+			recordingTime: '00:00',
+			recordHint: '点击开始录音',
+			usbConnected: false,
+			usbStatusText: 'USB声卡未连接',
+			waveformData: new Array(20).fill(10),
+			
+			// 音频管理器
+			usbAudioManager: null as USBAudioManager | null,
+			audioProcessor: null as AudioProcessor | null,
+			
+			// 定时器
+			recordTimer: null as number | null,
+			startTime: 0,
+			
+			// 语言列表
+			languages: [
+				{ label: '汉语', code: 'zh-CN' },
+				{ label: '英语', code: 'en-US' },
+				{ label: '日语', code: 'ja-JP' },
+				{ label: '韩语', code: 'ko-KR' },
+				{ label: '法语', code: 'fr-FR' },
+				{ label: '德语', code: 'de-DE' },
+				{ label: '西班牙语', code: 'es-ES' },
+				{ label: '俄语', code: 'ru-RU' }
+			]
+		}
+	},
+	
+	onLoad() {
+		// 初始化USB音频管理器
+		this.initUSBAudio()
+		
+		// 请求必要的权限
+		this.requestPermissions()
+	},
+	
+	onUnload() {
+		// 清理资源
+		if (this.isRecording) {
+			this.stopRecording()
+		}
+		if (this.usbAudioManager) {
+			this.usbAudioManager.release()
+		}
+	},
+	
+	methods: {
+		// 初始化USB音频
+		initUSBAudio() {
+			this.usbAudioManager = new USBAudioManager()
+			this.audioProcessor = new AudioProcessor()
+			
+			// 监听USB连接状态
+			this.usbAudioManager.onConnectionChange((connected: boolean) => {
+				this.usbConnected = connected
+				this.usbStatusText = connected ? 'USB声卡已连接' : 'USB声卡未连接'
+				
+				if (connected) {
+					uni.showToast({
+						title: 'USB声卡已连接',
+						icon: 'success'
+					})
+				} else if (this.isRecording) {
+					this.stopRecording()
+				}
+			})
+			
+			// 检查USB设备
+			this.checkUSBDevice()
+		},
+		
+		// 检查USB设备
+		checkUSBDevice() {
+			if (this.usbAudioManager) {
+				const connected = this.usbAudioManager.checkConnection()
+				this.usbConnected = connected
+				this.usbStatusText = connected ? 'USB声卡已连接' : 'USB声卡未连接'
+			}
+		},
+		
+		// 请求权限
+		requestPermissions() {
+			// #ifdef APP-ANDROID
+			const permissions = [
+				'android.permission.RECORD_AUDIO',
+				'android.permission.MODIFY_AUDIO_SETTINGS'
+			]
+			
+			plus.android.requestPermissions(permissions, (result) => {
+				if (result.granted.length === permissions.length) {
+					console.log('所有权限已授予')
+				} else {
+					uni.showModal({
+						title: '权限申请',
+						content: '需要音频权限才能使用录音功能',
+						showCancel: false
+					})
+				}
+			})
+			// #endif
+		},
+		
+		// 切换语言
+		switchLanguage(type: string) {
+			uni.showActionSheet({
+				itemList: this.languages.map(lang => lang.label),
+				success: (res) => {
+					const selectedLang = this.languages[res.tapIndex]
+					if (type === 'source') {
+						this.sourceLanguage.name = selectedLang.label
+						this.sourceLanguage.code = selectedLang.code
+					} else {
+						this.targetLanguage.name = selectedLang.label
+						this.targetLanguage.code = selectedLang.code
+					}
+				}
+			})
+		},
+		
+		// 切换录音状态
+		toggleRecording() {
+			if (this.isRecording) {
+				this.stopRecording()
+			} else {
+				this.startRecording()
+			}
+		},
+		
+		// 开始录音（触摸开始）
+		onRecordStart() {
+			// 可以添加长按录音的逻辑
+		},
+		
+		// 结束录音（触摸结束）
+		onRecordEnd() {
+			// 可以添加长按录音的逻辑
+		},
+		
+		// 开始录音
+		startRecording() {
+			if (!this.usbConnected) {
+				uni.showToast({
+					title: '请先连接USB声卡',
+					icon: 'none'
+				})
+				return
+			}
+			
+			this.isRecording = true
+			this.recordHint = '录音中...'
+			this.startTime = Date.now()
+			
+			// 启动录音定时器
+			this.startRecordTimer()
+			
+			// 启动音频录制
+			if (this.usbAudioManager && this.audioProcessor) {
+				this.usbAudioManager.startRecording((audioData: ArrayBuffer) => {
+					// 处理音频数据
+					this.processAudioData(audioData)
+					
+					// 更新波形显示
+					this.updateWaveform(audioData)
+				})
+			}
+			
+			// 启动波形动画
+			this.startWaveformAnimation()
+		},
+		
+		// 停止录音
+		stopRecording() {
+			this.isRecording = false
+			this.recordHint = '点击开始录音'
+			
+			// 停止定时器
+			if (this.recordTimer) {
+				clearInterval(this.recordTimer)
+				this.recordTimer = null
+			}
+			
+			// 停止音频录制
+			if (this.usbAudioManager) {
+				this.usbAudioManager.stopRecording()
+			}
+			
+			// 重置波形数据
+			this.waveformData = new Array(20).fill(10)
+			
+			// 重置录音时间
+			this.recordingTime = '00:00'
+		},
+		
+		// 启动录音定时器
+		startRecordTimer() {
+			this.recordTimer = setInterval(() => {
+				const elapsed = Date.now() - this.startTime
+				const seconds = Math.floor(elapsed / 1000)
+				const minutes = Math.floor(seconds / 60)
+				const secs = seconds % 60
+				this.recordingTime = `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+			}, 1000)
+		},
+		
+		// 处理音频数据
+		processAudioData(audioData: ArrayBuffer) {
+			if (this.audioProcessor) {
+				// 进行音频处理（降噪、增强等）
+				const processedData = this.audioProcessor.process(audioData)
+				
+				// 进行语音识别和翻译
+				this.performTranslation(processedData)
+			}
+		},
+		
+		// 执行翻译
+		performTranslation(audioData: ArrayBuffer) {
+			// 这里可以调用翻译API
+			// 实际项目中需要接入语音识别和翻译服务
+			console.log('Performing translation...')
+		},
+		
+		// 更新波形显示
+		updateWaveform(audioData: ArrayBuffer) {
+			// 简单的波形可视化
+			const dataArray = new Uint8Array(audioData)
+			const step = Math.floor(dataArray.length / 20)
+			
+			for (let i = 0; i < 20; i++) {
+				const value = dataArray[i * step] || 0
+				this.waveformData[i] = Math.floor((value / 255) * 50) + 10
+			}
+		},
+		
+		// 启动波形动画
+		startWaveformAnimation() {
+			const animateWaveform = () => {
+				if (!this.isRecording) return
+				
+				// 生成随机波形数据模拟音频输入
+				this.waveformData = this.waveformData.map(() => {
+					return Math.floor(Math.random() * 40) + 10
+				})
+				
+				setTimeout(animateWaveform, 100)
+			}
+			
+			animateWaveform()
+		}
+	}
+}
+</script>
+
+<style>
+.container {
+	flex: 1;
+	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+	padding: 20px;
+}
+
+/* 语言选择区域 */
+.language-selector {
+	background-color: #ffffff;
+	border-radius: 20px;
+	padding: 20px;
+	margin-top: 20px;
+	flex-direction: column;
+}
+
+.language-item {
+	padding: 15px 0;
+	flex-direction: column;
+	align-items: flex-start;
+}
+
+.language-label {
+	font-size: 14px;
+	color: #666666;
+	margin-bottom: 5px;
+}
+
+.language-name {
+	font-size: 18px;
+	color: #333333;
+	font-weight: 500;
+	flex-direction: row;
+	align-items: center;
+}
+
+.language-name::after {
+	content: '>';
+	margin-left: 10px;
+	color: #5B6FED;
+}
+
+.language-divider {
+	height: 1px;
+	background-color: #f0f0f0;
+	margin: 10px 0;
+}
+
+/* 录音按钮区域 */
+.record-area {
+	flex: 1;
+	justify-content: center;
+	align-items: center;
+	margin: 60px 0;
+}
+
+.record-button {
+	width: 120px;
+	height: 120px;
+	border-radius: 60px;
+	background-color: #FF6B6B;
+	justify-content: center;
+	align-items: center;
+	box-shadow: 0 10px 30px rgba(255, 107, 107, 0.3);
+	transition: all 0.3s ease;
+}
+
+.record-button.recording {
+	transform: scale(1.1);
+	background-color: #FF5252;
+}
+
+.record-inner {
+	width: 100px;
+	height: 100px;
+	border-radius: 50px;
+	background-color: rgba(255, 255, 255, 0.3);
+}
+
+.record-hint {
+	margin-top: 20px;
+	font-size: 16px;
+	color: #ffffff;
+}
+
+.record-time {
+	margin-top: 20px;
+	font-size: 20px;
+	color: #ffffff;
+	font-weight: bold;
+}
+
+/* USB状态指示器 */
+.usb-status {
+	flex-direction: row;
+	align-items: center;
+	justify-content: center;
+	padding: 10px 20px;
+	background-color: rgba(255, 255, 255, 0.2);
+	border-radius: 20px;
+	margin-bottom: 20px;
+}
+
+.status-indicator {
+	width: 10px;
+	height: 10px;
+	border-radius: 5px;
+	background-color: #FF5252;
+	margin-right: 10px;
+}
+
+.status-indicator.connected {
+	background-color: #4CAF50;
+}
+
+.status-text {
+	font-size: 14px;
+	color: #ffffff;
+}
+
+/* 波形显示区域 */
+.waveform-container {
+	flex-direction: row;
+	justify-content: center;
+	align-items: center;
+	height: 60px;
+	margin-top: 30px;
+}
+
+.waveform-bar {
+	width: 4px;
+	background-color: rgba(255, 255, 255, 0.7);
+	margin: 0 2px;
+	border-radius: 2px;
+	transition: height 0.1s ease;
+}
+</style>

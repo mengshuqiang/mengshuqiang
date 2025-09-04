@@ -1,0 +1,473 @@
+/**
+ * USB音频管理器
+ * 用于管理USB声卡的连接、权限请求和音频处理
+ */
+
+// #ifdef APP-ANDROID
+import Context from 'android.content.Context'
+import UsbManager from 'android.hardware.usb.UsbManager'
+import UsbDevice from 'android.hardware.usb.UsbDevice'
+import UsbInterface from 'android.hardware.usb.UsbInterface'
+import UsbDeviceConnection from 'android.hardware.usb.UsbDeviceConnection'
+import PendingIntent from 'android.app.PendingIntent'
+import Intent from 'android.content.Intent'
+import BroadcastReceiver from 'android.content.BroadcastReceiver'
+import IntentFilter from 'android.content.IntentFilter'
+import AudioManager from 'android.media.AudioManager'
+import AudioDeviceInfo from 'android.media.AudioDeviceInfo'
+import AudioRecord from 'android.media.AudioRecord'
+import AudioTrack from 'android.media.AudioTrack'
+import AudioFormat from 'android.media.AudioFormat'
+import AudioAttributes from 'android.media.AudioAttributes'
+import MediaRecorder from 'android.media.MediaRecorder'
+import Build from 'android.os.Build'
+// #endif
+
+export class USBAudioManager {
+	// #ifdef APP-ANDROID
+	private context: Context | null = null
+	private usbManager: UsbManager | null = null
+	private usbDevice: UsbDevice | null = null
+	private audioManager: AudioManager | null = null
+	private audioRecord: AudioRecord | null = null
+	private audioTrack: AudioTrack | null = null
+	private usbReceiver: BroadcastReceiver | null = null
+	// #endif
+	
+	private isRecording: boolean = false
+	private isConnected: boolean = false
+	private connectionCallback: ((connected: boolean) => void) | null = null
+	private audioDataCallback: ((data: ArrayBuffer) => void) | null = null
+	private recordingThread: any = null
+	
+	// 音频参数
+	private sampleRate: number = 44100
+	private channelConfig: number = 2 // 立体声
+	private audioFormat: number = 16 // 16位PCM
+	private bufferSize: number = 0
+	
+	constructor() {
+		this.init()
+	}
+	
+	/**
+	 * 初始化USB音频管理器
+	 */
+	private init(): void {
+		// #ifdef APP-ANDROID
+		try {
+			// 获取应用上下文
+			const app = uni.getApp()
+			this.context = app.$android.context
+			
+			if (this.context) {
+				// 获取USB管理器
+				this.usbManager = this.context.getSystemService(Context.USB_SERVICE) as UsbManager
+				
+				// 获取音频管理器
+				this.audioManager = this.context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+				
+				// 计算缓冲区大小
+				this.bufferSize = AudioRecord.getMinBufferSize(
+					this.sampleRate,
+					AudioFormat.CHANNEL_IN_STEREO,
+					AudioFormat.ENCODING_PCM_16BIT
+				)
+				
+				// 注册USB广播接收器
+				this.registerUSBReceiver()
+			}
+		} catch (e) {
+			console.error('Failed to initialize USB Audio Manager:', e)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 注册USB设备监听器
+	 */
+	private registerUSBReceiver(): void {
+		// #ifdef APP-ANDROID
+		if (!this.context) return
+		
+		const filter = new IntentFilter()
+		filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+		filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+		filter.addAction("com.uniapp.USB_PERMISSION")
+		
+		this.usbReceiver = new BroadcastReceiver({
+			onReceive: (context: Context, intent: Intent) => {
+				const action = intent.getAction()
+				const device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE) as UsbDevice
+				
+				if (UsbManager.ACTION_USB_DEVICE_ATTACHED == action) {
+					if (this.isAudioDevice(device)) {
+						this.usbDevice = device
+						this.requestUSBPermission()
+					}
+				} else if (UsbManager.ACTION_USB_DEVICE_DETACHED == action) {
+					if (device == this.usbDevice) {
+						this.onUSBDeviceDetached()
+					}
+				} else if ("com.uniapp.USB_PERMISSION" == action) {
+					const granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+					if (granted && device == this.usbDevice) {
+						this.onUSBPermissionGranted()
+					}
+				}
+			}
+		})
+		
+		this.context.registerReceiver(this.usbReceiver, filter)
+		// #endif
+	}
+	
+	/**
+	 * 检查设备是否为音频设备
+	 */
+	private isAudioDevice(device: UsbDevice): boolean {
+		// #ifdef APP-ANDROID
+		if (!device) return false
+		
+		// 检查设备类
+		if (device.getDeviceClass() == 0 && device.getDeviceSubclass() == 0) {
+			// 检查接口
+			for (let i = 0; i < device.getInterfaceCount(); i++) {
+				const usbInterface = device.getInterface(i)
+				// USB音频设备类为1，子类为1
+				if (usbInterface.getInterfaceClass() == 1 && 
+					usbInterface.getInterfaceSubclass() == 1) {
+					return true
+				}
+			}
+		}
+		
+		// 检查特定厂商ID（常见USB声卡厂商）
+		const vendorId = device.getVendorId()
+		const knownAudioVendors = [0x1b1c, 0x0d8c, 0x08bb, 0x046d, 0x041e]
+		
+		return knownAudioVendors.includes(vendorId)
+		// #endif
+		
+		return false
+	}
+	
+	/**
+	 * 请求USB设备权限
+	 */
+	private requestUSBPermission(): void {
+		// #ifdef APP-ANDROID
+		if (!this.usbDevice || !this.usbManager || !this.context) return
+		
+		if (this.usbManager.hasPermission(this.usbDevice)) {
+			this.onUSBPermissionGranted()
+		} else {
+			const permissionIntent = PendingIntent.getBroadcast(
+				this.context, 
+				0,
+				new Intent("com.uniapp.USB_PERMISSION"),
+				PendingIntent.FLAG_IMMUTABLE
+			)
+			this.usbManager.requestPermission(this.usbDevice, permissionIntent)
+		}
+		// #endif
+	}
+	
+	/**
+	 * USB权限授予后的处理
+	 */
+	private onUSBPermissionGranted(): void {
+		console.log('USB permission granted')
+		this.isConnected = true
+		this.setupAudioDevices()
+		
+		if (this.connectionCallback) {
+			this.connectionCallback(true)
+		}
+	}
+	
+	/**
+	 * USB设备断开连接处理
+	 */
+	private onUSBDeviceDetached(): void {
+		console.log('USB device detached')
+		this.isConnected = false
+		this.usbDevice = null
+		
+		if (this.isRecording) {
+			this.stopRecording()
+		}
+		
+		if (this.connectionCallback) {
+			this.connectionCallback(false)
+		}
+	}
+	
+	/**
+	 * 设置音频设备
+	 */
+	private setupAudioDevices(): void {
+		// #ifdef APP-ANDROID
+		if (!this.audioManager) return
+		
+		// 获取所有音频设备
+		const devices = this.audioManager.getDevices(AudioManager.GET_DEVICES_ALL)
+		
+		let usbInputDevice: AudioDeviceInfo | null = null
+		let usbOutputDevice: AudioDeviceInfo | null = null
+		
+		for (const device of devices) {
+			const deviceType = device.getType()
+			
+			// 检查是否为USB音频设备
+			if (deviceType == AudioDeviceInfo.TYPE_USB_DEVICE ||
+				deviceType == AudioDeviceInfo.TYPE_USB_HEADSET ||
+				deviceType == AudioDeviceInfo.TYPE_USB_ACCESSORY) {
+				
+				if (device.isSink()) {
+					usbOutputDevice = device
+					console.log('Found USB output device:', device.getProductName())
+				}
+				
+				if (device.isSource()) {
+					usbInputDevice = device
+					console.log('Found USB input device:', device.getProductName())
+				}
+			}
+		}
+		
+		// 创建音频录制和播放实例
+		if (usbInputDevice || usbOutputDevice) {
+			this.createAudioInstances(usbInputDevice, usbOutputDevice)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 创建音频录制和播放实例
+	 */
+	private createAudioInstances(inputDevice: any, outputDevice: any): void {
+		// #ifdef APP-ANDROID
+		try {
+			// 创建AudioRecord实例
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+				const recordBuilder = new AudioRecord.Builder()
+					.setAudioSource(MediaRecorder.AudioSource.DEFAULT)
+					.setAudioFormat(new AudioFormat.Builder()
+						.setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+						.setSampleRate(this.sampleRate)
+						.setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+						.build())
+					.setBufferSizeInBytes(this.bufferSize * 2)
+				
+				if (inputDevice) {
+					recordBuilder.setAudioDevice(inputDevice)
+				}
+				
+				this.audioRecord = recordBuilder.build()
+			} else {
+				// 旧版本Android
+				this.audioRecord = new AudioRecord(
+					MediaRecorder.AudioSource.DEFAULT,
+					this.sampleRate,
+					AudioFormat.CHANNEL_IN_STEREO,
+					AudioFormat.ENCODING_PCM_16BIT,
+					this.bufferSize * 2
+				)
+			}
+			
+			// 创建AudioTrack实例
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+				const trackBuilder = new AudioTrack.Builder()
+					.setAudioAttributes(new AudioAttributes.Builder()
+						.setUsage(AudioAttributes.USAGE_MEDIA)
+						.setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+						.build())
+					.setAudioFormat(new AudioFormat.Builder()
+						.setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+						.setSampleRate(this.sampleRate)
+						.setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+						.build())
+					.setBufferSizeInBytes(this.bufferSize * 2)
+				
+				if (outputDevice) {
+					trackBuilder.setAudioDevice(outputDevice)
+				}
+				
+				this.audioTrack = trackBuilder.build()
+			} else {
+				// 旧版本Android
+				this.audioTrack = new AudioTrack(
+					AudioManager.STREAM_MUSIC,
+					this.sampleRate,
+					AudioFormat.CHANNEL_OUT_STEREO,
+					AudioFormat.ENCODING_PCM_16BIT,
+					this.bufferSize * 2,
+					AudioTrack.MODE_STREAM
+				)
+			}
+			
+			console.log('Audio instances created successfully')
+		} catch (e) {
+			console.error('Failed to create audio instances:', e)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 检查USB连接状态
+	 */
+	public checkConnection(): boolean {
+		// #ifdef APP-ANDROID
+		if (!this.usbManager) return false
+		
+		const deviceList = this.usbManager.getDeviceList()
+		const devices = deviceList.values()
+		
+		for (const device of devices) {
+			if (this.isAudioDevice(device)) {
+				this.usbDevice = device
+				this.requestUSBPermission()
+				return true
+			}
+		}
+		// #endif
+		
+		return false
+	}
+	
+	/**
+	 * 设置连接状态回调
+	 */
+	public onConnectionChange(callback: (connected: boolean) => void): void {
+		this.connectionCallback = callback
+	}
+	
+	/**
+	 * 开始录音
+	 */
+	public startRecording(callback: (data: ArrayBuffer) => void): void {
+		// #ifdef APP-ANDROID
+		if (!this.audioRecord || this.isRecording) return
+		
+		this.audioDataCallback = callback
+		this.isRecording = true
+		
+		try {
+			this.audioRecord.startRecording()
+			
+			// 创建录音线程
+			this.recordingThread = new Thread(() => {
+				const buffer = new Array(this.bufferSize)
+				
+				while (this.isRecording) {
+					const bytesRead = this.audioRecord.read(buffer, 0, buffer.length)
+					
+					if (bytesRead > 0 && this.audioDataCallback) {
+						// 转换为ArrayBuffer
+						const arrayBuffer = new ArrayBuffer(bytesRead)
+						const view = new Uint8Array(arrayBuffer)
+						for (let i = 0; i < bytesRead; i++) {
+							view[i] = buffer[i]
+						}
+						
+						this.audioDataCallback(arrayBuffer)
+					}
+				}
+			})
+			
+			this.recordingThread.start()
+			console.log('Recording started')
+		} catch (e) {
+			console.error('Failed to start recording:', e)
+			this.isRecording = false
+		}
+		// #endif
+	}
+	
+	/**
+	 * 停止录音
+	 */
+	public stopRecording(): void {
+		// #ifdef APP-ANDROID
+		this.isRecording = false
+		
+		if (this.audioRecord) {
+			try {
+				this.audioRecord.stop()
+				console.log('Recording stopped')
+			} catch (e) {
+				console.error('Failed to stop recording:', e)
+			}
+		}
+		
+		if (this.recordingThread) {
+			try {
+				this.recordingThread.join(1000)
+			} catch (e) {
+				console.error('Failed to join recording thread:', e)
+			}
+			this.recordingThread = null
+		}
+		// #endif
+	}
+	
+	/**
+	 * 播放音频数据
+	 */
+	public playAudio(audioData: ArrayBuffer): void {
+		// #ifdef APP-ANDROID
+		if (!this.audioTrack) return
+		
+		try {
+			if (this.audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) {
+				this.audioTrack.play()
+			}
+			
+			const byteArray = new Uint8Array(audioData)
+			this.audioTrack.write(byteArray, 0, byteArray.length)
+		} catch (e) {
+			console.error('Failed to play audio:', e)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 设置音量
+	 */
+	public setVolume(volume: number): void {
+		// #ifdef APP-ANDROID
+		if (this.audioTrack) {
+			const clampedVolume = Math.max(0, Math.min(1, volume))
+			this.audioTrack.setVolume(clampedVolume)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 释放资源
+	 */
+	public release(): void {
+		this.stopRecording()
+		
+		// #ifdef APP-ANDROID
+		if (this.audioRecord) {
+			this.audioRecord.release()
+			this.audioRecord = null
+		}
+		
+		if (this.audioTrack) {
+			this.audioTrack.release()
+			this.audioTrack = null
+		}
+		
+		if (this.usbReceiver && this.context) {
+			this.context.unregisterReceiver(this.usbReceiver)
+			this.usbReceiver = null
+		}
+		// #endif
+		
+		this.connectionCallback = null
+		this.audioDataCallback = null
+	}
+}
