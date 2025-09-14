@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    
+    <!-- 前台服务权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ 需要声明前台服务类型 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_TYPE_NONE" />
+    <!-- 通知权限 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 保持唤醒权限 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    
+    <application>
+        <!-- 声明前台服务 -->
+        <service
+            android:name=".service.MyForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="none"
+            tools:targetApi="34">
+            <intent-filter>
+                <action android:name="com.example.app.START_FOREGROUND_SERVICE" />
+            </intent-filter>
+        </service>
+        
+        <!-- 如果需要多个服务类型，可以使用管道符分隔 -->
+        <!-- android:foregroundServiceType="none|dataSync" -->
+        
+        <!-- 备用配置：使用特殊用途服务 -->
+        <service
+            android:name=".service.SpecialUseService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            tools:targetApi="34">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="此服务用于保持应用在后台运行，执行必要的任务处理" />
+        </service>
+    </application>
+    
+</manifest>

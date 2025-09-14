@@ -1,0 +1,253 @@
+<template>
+  <view class="container">
+    <view class="header">
+      <text class="title">前台服务示例</text>
+      <text class="subtitle">FOREGROUND_SERVICE_TYPE_NONE 配置</text>
+    </view>
+    
+    <view class="content">
+      <view class="info-card">
+        <text class="info-title">服务配置说明</text>
+        <text class="info-text">此应用已配置 FOREGROUND_SERVICE_TYPE_NONE</text>
+        <text class="info-text">适用于 Android 14 (API 34) 及以上版本</text>
+      </view>
+      
+      <view class="button-group">
+        <button class="btn btn-primary" @click="startForegroundService">
+          启动前台服务
+        </button>
+        <button class="btn btn-secondary" @click="stopForegroundService">
+          停止前台服务
+        </button>
+      </view>
+      
+      <view class="status-card">
+        <text class="status-title">服务状态</text>
+        <text :class="['status-text', serviceRunning ? 'running' : 'stopped']">
+          {{ serviceRunning ? '运行中' : '已停止' }}
+        </text>
+      </view>
+      
+      <view class="log-card">
+        <text class="log-title">操作日志</text>
+        <scroll-view class="log-scroll" scroll-y="true">
+          <text v-for="(log, index) in logs" :key="index" class="log-item">
+            {{ log }}
+          </text>
+        </scroll-view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      serviceRunning: false,
+      logs: []
+    }
+  },
+  methods: {
+    startForegroundService() {
+      // #ifdef APP-PLUS
+      try {
+        // 获取原生插件或使用 plus.android
+        const main = plus.android.runtimeMainActivity();
+        const Intent = plus.android.importClass("android.content.Intent");
+        const Build = plus.android.importClass("android.os.Build");
+        
+        // 创建服务Intent
+        const serviceIntent = new Intent();
+        serviceIntent.setClassName(main, "io.dcloud.uniapp.service.MyForegroundService");
+        serviceIntent.setAction("com.example.app.START_FOREGROUND_SERVICE");
+        
+        // Android 8.0+ 需要使用 startForegroundService
+        if (Build.VERSION.SDK_INT >= 26) {
+          main.startForegroundService(serviceIntent);
+        } else {
+          main.startService(serviceIntent);
+        }
+        
+        this.serviceRunning = true;
+        this.addLog('前台服务已启动 (TYPE_NONE)');
+        
+        uni.showToast({
+          title: '服务已启动',
+          icon: 'success'
+        });
+      } catch (e) {
+        this.addLog('启动服务失败: ' + e.message);
+        uni.showToast({
+          title: '启动失败',
+          icon: 'error'
+        });
+      }
+      // #endif
+      
+      // #ifndef APP-PLUS
+      this.addLog('此功能仅在 App 端可用');
+      uni.showToast({
+        title: '仅支持App端',
+        icon: 'none'
+      });
+      // #endif
+    },
+    
+    stopForegroundService() {
+      // #ifdef APP-PLUS
+      try {
+        const main = plus.android.runtimeMainActivity();
+        const Intent = plus.android.importClass("android.content.Intent");
+        
+        const serviceIntent = new Intent();
+        serviceIntent.setClassName(main, "io.dcloud.uniapp.service.MyForegroundService");
+        
+        main.stopService(serviceIntent);
+        
+        this.serviceRunning = false;
+        this.addLog('前台服务已停止');
+        
+        uni.showToast({
+          title: '服务已停止',
+          icon: 'success'
+        });
+      } catch (e) {
+        this.addLog('停止服务失败: ' + e.message);
+        uni.showToast({
+          title: '停止失败',
+          icon: 'error'
+        });
+      }
+      // #endif
+      
+      // #ifndef APP-PLUS
+      this.addLog('此功能仅在 App 端可用');
+      uni.showToast({
+        title: '仅支持App端',
+        icon: 'none'
+      });
+      // #endif
+    },
+    
+    addLog(message: string) {
+      const timestamp = new Date().toLocaleTimeString();
+      this.logs.unshift(`[${timestamp}] ${message}`);
+      if (this.logs.length > 20) {
+        this.logs.pop();
+      }
+    }
+  },
+  onLoad() {
+    this.addLog('应用已启动');
+    this.addLog('配置: FOREGROUND_SERVICE_TYPE_NONE');
+  }
+}
+</script>
+
+<style>
+.container {
+  flex: 1;
+  background-color: #f5f5f5;
+}
+
+.header {
+  background-color: #007AFF;
+  padding: 40rpx;
+  align-items: center;
+}
+
+.title {
+  font-size: 36rpx;
+  color: #ffffff;
+  font-weight: bold;
+}
+
+.subtitle {
+  font-size: 24rpx;
+  color: #e0e0e0;
+  margin-top: 10rpx;
+}
+
+.content {
+  padding: 30rpx;
+}
+
+.info-card, .status-card, .log-card {
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  padding: 30rpx;
+  margin-bottom: 30rpx;
+  box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.1);
+}
+
+.info-title, .status-title, .log-title {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #333333;
+  margin-bottom: 20rpx;
+}
+
+.info-text {
+  font-size: 28rpx;
+  color: #666666;
+  margin-bottom: 10rpx;
+}
+
+.button-group {
+  flex-direction: row;
+  justify-content: space-between;
+  margin-bottom: 30rpx;
+}
+
+.btn {
+  flex: 1;
+  height: 88rpx;
+  border-radius: 44rpx;
+  font-size: 30rpx;
+  font-weight: bold;
+  margin: 0 15rpx;
+}
+
+.btn-primary {
+  background-color: #007AFF;
+  color: #ffffff;
+}
+
+.btn-secondary {
+  background-color: #FF3B30;
+  color: #ffffff;
+}
+
+.status-text {
+  font-size: 36rpx;
+  font-weight: bold;
+  text-align: center;
+  padding: 20rpx;
+  border-radius: 10rpx;
+}
+
+.status-text.running {
+  color: #4CAF50;
+  background-color: #E8F5E9;
+}
+
+.status-text.stopped {
+  color: #F44336;
+  background-color: #FFEBEE;
+}
+
+.log-scroll {
+  height: 400rpx;
+  background-color: #f9f9f9;
+  border-radius: 10rpx;
+  padding: 20rpx;
+}
+
+.log-item {
+  font-size: 24rpx;
+  color: #666666;
+  margin-bottom: 10rpx;
+  line-height: 1.5;
+}
+</style>

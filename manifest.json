@@ -1,0 +1,87 @@
+{
+  "name": "uni-app-x-foreground-service",
+  "appid": "__UNI__EXAMPLE",
+  "description": "uni-app x with FOREGROUND_SERVICE_TYPE_NONE configuration",
+  "versionName": "1.0.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "app-plus": {
+    "usingComponents": true,
+    "nvueStyleCompiler": "uni-app",
+    "compilerVersion": 3,
+    "splashscreen": {
+      "alwaysShowBeforeRender": true,
+      "waiting": true,
+      "autoclose": true,
+      "delay": 0
+    },
+    "modules": {
+      "OAuth": {},
+      "Payment": {},
+      "Push": {},
+      "Share": {},
+      "Speech": {},
+      "VideoPlayer": {}
+    },
+    "distribute": {
+      "android": {
+        "permissions": [
+          "android.permission.FOREGROUND_SERVICE",
+          "android.permission.FOREGROUND_SERVICE_TYPE_NONE",
+          "android.permission.POST_NOTIFICATIONS",
+          "android.permission.WAKE_LOCK"
+        ],
+        "minSdkVersion": 21,
+        "targetSdkVersion": 34,
+        "abiFilters": ["armeabi-v7a", "arm64-v8a"],
+        "foregroundServiceTypes": ["none"],
+        "manifestPlaceholders": {
+          "FOREGROUND_SERVICE_TYPE": "none"
+        }
+      },
+      "ios": {
+        "dSYMs": false
+      },
+      "sdkConfigs": {
+        "ad": {},
+        "oauth": {},
+        "payment": {},
+        "push": {},
+        "share": {},
+        "speech": {},
+        "statics": {}
+      }
+    }
+  },
+  "quickapp": {},
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false
+    },
+    "usingComponents": true
+  },
+  "mp-alipay": {
+    "usingComponents": true
+  },
+  "mp-baidu": {
+    "usingComponents": true
+  },
+  "mp-toutiao": {
+    "usingComponents": true
+  },
+  "uniStatistics": {
+    "enable": false
+  },
+  "vueVersion": "3",
+  "locale": "zh-Hans",
+  "fallbackLocale": "zh-Hans",
+  "compatible": {
+    "ignoreVersion": true
+  },
+  "uni-app-x": {
+    "uvue": {
+      "flex-direction": "column"
+    }
+  }
+}
