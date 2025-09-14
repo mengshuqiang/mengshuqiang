@@ -1,0 +1,257 @@
+import { Activity } from 'android.app.Activity'
+import { Bundle } from 'android.os.Bundle'
+import { Intent } from 'android.content.Intent'
+import { View } from 'android.view.View'
+import { Button } from 'android.widget.Button'
+import { TextView } from 'android.widget.TextView'
+import { LinearLayout } from 'android.widget.LinearLayout'
+import { ViewGroup } from 'android.view.ViewGroup'
+import { Gravity } from 'android.view.Gravity'
+import { Toast } from 'android.widget.Toast'
+import { PackageManager } from 'android.content.pm.PackageManager'
+import { Manifest } from 'android.Manifest'
+import { Build } from 'android.os.Build'
+import { ActivityCompat } from 'androidx.core.app.ActivityCompat'
+import { ContextCompat } from 'androidx.core.content.ContextCompat'
+import { Log } from 'android.util.Log'
+
+export class MainActivity extends Activity {
+    private static TAG = "MainActivity"
+    private static REQUEST_PERMISSIONS = 100
+    private static REQUEST_MEDIA_PROJECTION = 1001
+    
+    private usbAudioManager: UsbAudioManager | null = null
+    private statusTextView: TextView | null = null
+    private startButton: Button | null = null
+    private stopButton: Button | null = null
+    
+    override onCreate(savedInstanceState: Bundle | null): void {
+        super.onCreate(savedInstanceState)
+        
+        // Create UI
+        this.setupUI()
+        
+        // Initialize USB Audio Manager
+        this.usbAudioManager = new UsbAudioManager(this)
+        
+        // Check and request permissions
+        this.checkPermissions()
+    }
+    
+    /**
+     * Setup the user interface
+     */
+    private setupUI(): void {
+        // Create main layout
+        val layout = new LinearLayout(this)
+        layout.setOrientation(LinearLayout.VERTICAL)
+        layout.setGravity(Gravity.CENTER)
+        layout.setPadding(20, 20, 20, 20)
+        
+        // Create status text view
+        this.statusTextView = new TextView(this)
+        this.statusTextView.setText("Ready to start audio capture")
+        this.statusTextView.setTextSize(18)
+        this.statusTextView.setPadding(0, 20, 0, 20)
+        
+        // Create start button
+        this.startButton = new Button(this)
+        this.startButton.setText("Start Audio Capture")
+        this.startButton.setOnClickListener(new View.OnClickListener() {
+            override onClick(v: View): void {
+                this@MainActivity.startAudioCapture()
+            }
+        })
+        
+        // Create stop button
+        this.stopButton = new Button(this)
+        this.stopButton.setText("Stop Audio Capture")
+        this.stopButton.setEnabled(false)
+        this.stopButton.setOnClickListener(new View.OnClickListener() {
+            override onClick(v: View): void {
+                this@MainActivity.stopAudioCapture()
+            }
+        })
+        
+        // Add views to layout
+        layout.addView(this.statusTextView)
+        layout.addView(this.startButton)
+        layout.addView(this.stopButton)
+        
+        // Set content view
+        this.setContentView(layout)
+    }
+    
+    /**
+     * Check and request necessary permissions
+     */
+    private checkPermissions(): void {
+        val permissions = mutableListOf<String>()
+        
+        // Check RECORD_AUDIO permission
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) 
+            != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.RECORD_AUDIO)
+        }
+        
+        // Check FOREGROUND_SERVICE permission (Android P+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.FOREGROUND_SERVICE) 
+                != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.FOREGROUND_SERVICE)
+            }
+        }
+        
+        // Check POST_NOTIFICATIONS permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") 
+                != PackageManager.PERMISSION_GRANTED) {
+                permissions.add("android.permission.POST_NOTIFICATIONS")
+            }
+        }
+        
+        // Request permissions if needed
+        if (permissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(
+                this,
+                permissions.toTypedArray(),
+                MainActivity.REQUEST_PERMISSIONS
+            )
+        } else {
+            Log.d(MainActivity.TAG, "All permissions granted")
+            this.updateStatus("Permissions granted. Ready to start.")
+        }
+    }
+    
+    /**
+     * Handle permission request results
+     */
+    override onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ): void {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        
+        if (requestCode == MainActivity.REQUEST_PERMISSIONS) {
+            var allGranted = true
+            
+            for (i in 0 until grantResults.length) {
+                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false
+                    Log.e(MainActivity.TAG, "Permission denied: " + permissions[i])
+                }
+            }
+            
+            if (allGranted) {
+                Log.d(MainActivity.TAG, "All permissions granted")
+                this.updateStatus("Permissions granted. Ready to start.")
+            } else {
+                this.updateStatus("Some permissions denied. Audio capture may not work properly.")
+                Toast.makeText(
+                    this,
+                    "Please grant all permissions for audio capture to work",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+    
+    /**
+     * Start audio capture
+     */
+    private startAudioCapture(): void {
+        Log.d(MainActivity.TAG, "Starting audio capture")
+        this.updateStatus("Initializing MediaProjection...")
+        
+        // Initialize MediaProjection (this will request permission and start the service)
+        this.usbAudioManager?.initializeMediaProjection()
+        
+        // Update UI
+        this.startButton?.setEnabled(false)
+    }
+    
+    /**
+     * Stop audio capture
+     */
+    private stopAudioCapture(): void {
+        Log.d(MainActivity.TAG, "Stopping audio capture")
+        
+        // Stop recording
+        this.usbAudioManager?.stopRecording()
+        
+        // Update UI
+        this.updateStatus("Audio capture stopped")
+        this.startButton?.setEnabled(true)
+        this.stopButton?.setEnabled(false)
+    }
+    
+    /**
+     * Handle activity result (for MediaProjection permission)
+     */
+    override onActivityResult(requestCode: Int, resultCode: Int, data: Intent | null): void {
+        super.onActivityResult(requestCode, resultCode, data)
+        
+        if (requestCode == MainActivity.REQUEST_MEDIA_PROJECTION) {
+            if (resultCode == RESULT_OK && data != null) {
+                Log.d(MainActivity.TAG, "MediaProjection permission granted")
+                this.updateStatus("MediaProjection permission granted. Starting capture...")
+                
+                // Pass the result to UsbAudioManager
+                this.usbAudioManager?.handleActivityResult(requestCode, resultCode, data)
+                
+                // Start recording after a short delay
+                this.postDelayed({
+                    if (this.usbAudioManager?.isMediaProjectionAvailable() == true) {
+                        if (this.usbAudioManager?.startRecording() == true) {
+                            this.updateStatus("Audio capture started")
+                            this.stopButton?.setEnabled(true)
+                        } else {
+                            this.updateStatus("Failed to start recording")
+                            this.startButton?.setEnabled(true)
+                        }
+                    } else {
+                        this.updateStatus("MediaProjection not available")
+                        this.startButton?.setEnabled(true)
+                    }
+                }, 1000)
+            } else {
+                Log.e(MainActivity.TAG, "MediaProjection permission denied")
+                this.updateStatus("Permission denied. Cannot capture audio.")
+                this.startButton?.setEnabled(true)
+                
+                Toast.makeText(
+                    this,
+                    "Screen recording permission is required for audio capture",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+    
+    /**
+     * Update status text
+     */
+    private updateStatus(status: String): void {
+        this.runOnUiThread({
+            this.statusTextView?.setText(status)
+        })
+    }
+    
+    /**
+     * Post delayed action
+     */
+    private postDelayed(action: () -> void, delayMillis: Long): void {
+        this.statusTextView?.postDelayed(action, delayMillis)
+    }
+    
+    override onDestroy(): void {
+        super.onDestroy()
+        
+        // Release resources
+        this.usbAudioManager?.release()
+        this.usbAudioManager = null
+        
+        Log.d(MainActivity.TAG, "Activity destroyed")
+    }
+}

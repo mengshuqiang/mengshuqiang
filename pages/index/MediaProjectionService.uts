@@ -1,0 +1,219 @@
+import { Service } from 'android.app.Service'
+import { Notification } from 'android.app.Notification'
+import { NotificationChannel } from 'android.app.NotificationChannel'
+import { NotificationManager } from 'android.app.NotificationManager'
+import { PendingIntent } from 'android.app.PendingIntent'
+import { Intent } from 'android.content.Intent'
+import { IBinder } from 'android.os.IBinder'
+import { Binder } from 'android.os.Binder'
+import { Build } from 'android.os.Build'
+import { ServiceInfo } from 'android.content.pm.ServiceInfo'
+import { MediaProjection } from 'android.media.projection.MediaProjection'
+import { MediaProjectionManager } from 'android.media.projection.MediaProjectionManager'
+import { Log } from 'android.util.Log'
+import { R } from 'android.R'
+
+export class MediaProjectionService extends Service {
+    private static TAG = "MediaProjectionService"
+    private static CHANNEL_ID = "MediaProjectionChannel"
+    private static NOTIFICATION_ID = 1
+    
+    private binder: LocalBinder = new LocalBinder()
+    private mediaProjection: MediaProjection | null = null
+    
+    /**
+     * Binder class for local service binding
+     */
+    public class LocalBinder extends Binder {
+        public getService(): MediaProjectionService {
+            return MediaProjectionService.this
+        }
+    }
+    
+    override onCreate(): void {
+        super.onCreate()
+        Log.d(MediaProjectionService.TAG, "Service created")
+        this.createNotificationChannel()
+    }
+    
+    override onStartCommand(intent: Intent | null, flags: Int, startId: Int): Int {
+        Log.d(MediaProjectionService.TAG, "Service started")
+        this.startForegroundService()
+        return Service.START_STICKY
+    }
+    
+    override onBind(intent: Intent): IBinder {
+        Log.d(MediaProjectionService.TAG, "Service bound")
+        return this.binder
+    }
+    
+    override onUnbind(intent: Intent): Boolean {
+        Log.d(MediaProjectionService.TAG, "Service unbound")
+        return super.onUnbind(intent)
+    }
+    
+    override onDestroy(): void {
+        Log.d(MediaProjectionService.TAG, "Service destroyed")
+        this.stopMediaProjection()
+        super.onDestroy()
+    }
+    
+    /**
+     * Create notification channel for Android O and above
+     */
+    private createNotificationChannel(): void {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = new NotificationChannel(
+                MediaProjectionService.CHANNEL_ID,
+                "Media Projection Service",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            channel.setDescription("Service for capturing audio using MediaProjection")
+            channel.setShowBadge(false)
+            channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC)
+            
+            val notificationManager = this.getSystemService(NotificationManager.class) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+            
+            Log.d(MediaProjectionService.TAG, "Notification channel created")
+        }
+    }
+    
+    /**
+     * Start the service as a foreground service with proper type
+     */
+    private startForegroundService(): void {
+        val notification = this.createNotification()
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // For Android Q (API 29) and above, specify the service type
+            try {
+                this.startForeground(
+                    MediaProjectionService.NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                )
+                Log.d(MediaProjectionService.TAG, "Started foreground service with MEDIA_PROJECTION type")
+            } catch (e: Exception) {
+                Log.e(MediaProjectionService.TAG, "Error starting foreground service: " + e.getMessage())
+                e.printStackTrace()
+                // Fallback to regular foreground service
+                this.startForeground(MediaProjectionService.NOTIFICATION_ID, notification)
+            }
+        } else {
+            // For older Android versions
+            this.startForeground(MediaProjectionService.NOTIFICATION_ID, notification)
+            Log.d(MediaProjectionService.TAG, "Started foreground service (legacy)")
+        }
+    }
+    
+    /**
+     * Create notification for the foreground service
+     */
+    private createNotification(): Notification {
+        val builder: Notification.Builder
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder = new Notification.Builder(this, MediaProjectionService.CHANNEL_ID)
+        } else {
+            builder = new Notification.Builder(this)
+        }
+        
+        // Create a pending intent for notification tap
+        val notificationIntent = new Intent(this, this.getClass())
+        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, pendingIntentFlags)
+        
+        // Build the notification
+        builder.setContentTitle("Audio Capture Service")
+            .setContentText("Capturing system audio...")
+            .setSmallIcon(R.drawable.ic_media_play) // Using system icon as fallback
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            builder.setCategory(Notification.CATEGORY_SERVICE)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+        }
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder.setChannelId(MediaProjectionService.CHANNEL_ID)
+        }
+        
+        return builder.build()
+    }
+    
+    /**
+     * Create MediaProjection instance
+     */
+    public createMediaProjection(
+        manager: MediaProjectionManager,
+        resultCode: Int,
+        data: Intent
+    ): MediaProjection | null {
+        try {
+            // Stop any existing projection
+            this.stopMediaProjection()
+            
+            // Create new MediaProjection
+            this.mediaProjection = manager.getMediaProjection(resultCode, data)
+            
+            if (this.mediaProjection != null) {
+                // Register callback for MediaProjection lifecycle
+                this.mediaProjection.registerCallback(new MediaProjection.Callback() {
+                    override onStop(): void {
+                        Log.d(MediaProjectionService.TAG, "MediaProjection stopped")
+                        MediaProjectionService.this.mediaProjection = null
+                    }
+                }, null)
+                
+                Log.d(MediaProjectionService.TAG, "MediaProjection created successfully")
+            } else {
+                Log.e(MediaProjectionService.TAG, "Failed to create MediaProjection")
+            }
+            
+            return this.mediaProjection
+        } catch (e: SecurityException) {
+            Log.e(MediaProjectionService.TAG, "SecurityException creating MediaProjection: " + e.getMessage())
+            e.printStackTrace()
+            return null
+        } catch (e: Exception) {
+            Log.e(MediaProjectionService.TAG, "Exception creating MediaProjection: " + e.getMessage())
+            e.printStackTrace()
+            return null
+        }
+    }
+    
+    /**
+     * Stop MediaProjection
+     */
+    public stopMediaProjection(): void {
+        if (this.mediaProjection != null) {
+            try {
+                this.mediaProjection.stop()
+                this.mediaProjection = null
+                Log.d(MediaProjectionService.TAG, "MediaProjection stopped")
+            } catch (e: Exception) {
+                Log.e(MediaProjectionService.TAG, "Error stopping MediaProjection: " + e.getMessage())
+            }
+        }
+    }
+    
+    /**
+     * Get current MediaProjection instance
+     */
+    public getMediaProjection(): MediaProjection | null {
+        return this.mediaProjection
+    }
+    
+    /**
+     * Check if MediaProjection is active
+     */
+    public isProjectionActive(): Boolean {
+        return this.mediaProjection != null
+    }
+}

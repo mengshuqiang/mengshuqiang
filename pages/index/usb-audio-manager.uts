@@ -1,0 +1,384 @@
+import { Activity } from 'android.app.Activity'
+import { Context } from 'android.content.Context'
+import { Intent } from 'android.content.Intent'
+import { ServiceConnection } from 'android.content.ServiceConnection'
+import { ComponentName } from 'android.content.ComponentName'
+import { IBinder } from 'android.os.IBinder'
+import { Build } from 'android.os.Build'
+import { MediaProjection } from 'android.media.projection.MediaProjection'
+import { MediaProjectionManager } from 'android.media.projection.MediaProjectionManager'
+import { AudioManager } from 'android.media.AudioManager'
+import { AudioFormat } from 'android.media.AudioFormat'
+import { AudioRecord } from 'android.media.AudioRecord'
+import { AudioAttributes } from 'android.media.AudioAttributes'
+import { AudioPlaybackCaptureConfiguration } from 'android.media.AudioPlaybackCaptureConfiguration'
+import { MediaRecorder } from 'android.media.MediaRecorder'
+import { Handler } from 'android.os.Handler'
+import { Looper } from 'android.os.Looper'
+import { Log } from 'android.util.Log'
+
+export class UsbAudioManager {
+    private static TAG = "UsbAudioManager"
+    private context: Context | null = null
+    private activity: Activity | null = null
+    private mediaProjectionManager: MediaProjectionManager | null = null
+    private mediaProjection: MediaProjection | null = null
+    private audioRecord: AudioRecord | null = null
+    private isRecording = false
+    private recordingThread: Thread | null = null
+    
+    // Service related
+    private mediaProjectionService: MediaProjectionService | null = null
+    private serviceConnection: ServiceConnection | null = null
+    private isBound = false
+    
+    // Audio configuration
+    private sampleRate = 44100
+    private channelConfig = AudioFormat.CHANNEL_IN_STEREO
+    private audioFormat = AudioFormat.ENCODING_PCM_16BIT
+    private bufferSize = 0
+    
+    // Request codes
+    private static REQUEST_MEDIA_PROJECTION = 1001
+    
+    constructor(context: Context) {
+        this.context = context
+        if (context instanceof Activity) {
+            this.activity = context as Activity
+        }
+        this.initializeAudioConfiguration()
+        this.initializeServiceConnection()
+    }
+    
+    private initializeAudioConfiguration(): void {
+        this.bufferSize = AudioRecord.getMinBufferSize(
+            this.sampleRate,
+            this.channelConfig,
+            this.audioFormat
+        )
+        
+        if (this.bufferSize == AudioRecord.ERROR || this.bufferSize == AudioRecord.ERROR_BAD_VALUE) {
+            Log.e(UsbAudioManager.TAG, "Invalid buffer size")
+            this.bufferSize = this.sampleRate * 2 // fallback buffer size
+        }
+    }
+    
+    private initializeServiceConnection(): void {
+        this.serviceConnection = new ServiceConnection() {
+            override onServiceConnected(name: ComponentName, service: IBinder): void {
+                const binder = service as MediaProjectionService.LocalBinder
+                this.mediaProjectionService = binder.getService()
+                this.isBound = true
+                Log.d(UsbAudioManager.TAG, "MediaProjection service connected")
+            }
+            
+            override onServiceDisconnected(name: ComponentName): void {
+                this.mediaProjectionService = null
+                this.isBound = false
+                Log.d(UsbAudioManager.TAG, "MediaProjection service disconnected")
+            }
+        }
+    }
+    
+    /**
+     * Start the MediaProjection service
+     */
+    private startMediaProjectionService(): void {
+        if (this.context == null) {
+            Log.e(UsbAudioManager.TAG, "Context is null")
+            return
+        }
+        
+        const serviceIntent = new Intent(this.context, MediaProjectionService.class)
+        
+        // For Android O and above, start as foreground service
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            this.context.startForegroundService(serviceIntent)
+        } else {
+            this.context.startService(serviceIntent)
+        }
+        
+        // Bind to the service
+        this.context.bindService(serviceIntent, this.serviceConnection!!, Context.BIND_AUTO_CREATE)
+    }
+    
+    /**
+     * Stop the MediaProjection service
+     */
+    private stopMediaProjectionService(): void {
+        if (this.isBound && this.context != null) {
+            this.context.unbindService(this.serviceConnection!!)
+            this.isBound = false
+        }
+        
+        if (this.context != null) {
+            const serviceIntent = new Intent(this.context, MediaProjectionService.class)
+            this.context.stopService(serviceIntent)
+        }
+    }
+    
+    /**
+     * Initialize MediaProjection
+     */
+    public initializeMediaProjection(): void {
+        if (this.context == null) {
+            Log.e(UsbAudioManager.TAG, "Context is null")
+            return
+        }
+        
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            Log.e(UsbAudioManager.TAG, "MediaProjection requires API 21+")
+            return
+        }
+        
+        this.mediaProjectionManager = this.context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        
+        if (this.mediaProjectionManager == null) {
+            Log.e(UsbAudioManager.TAG, "Failed to get MediaProjectionManager")
+            return
+        }
+        
+        // Start the foreground service first
+        this.startMediaProjectionService()
+        
+        // Request media projection permission
+        this.requestMediaProjectionPermission()
+    }
+    
+    /**
+     * Request MediaProjection permission
+     */
+    private requestMediaProjectionPermission(): void {
+        if (this.activity == null || this.mediaProjectionManager == null) {
+            Log.e(UsbAudioManager.TAG, "Activity or MediaProjectionManager is null")
+            return
+        }
+        
+        const captureIntent = this.mediaProjectionManager.createScreenCaptureIntent()
+        this.activity.startActivityForResult(captureIntent, UsbAudioManager.REQUEST_MEDIA_PROJECTION)
+    }
+    
+    /**
+     * Handle activity result for MediaProjection permission
+     */
+    public handleActivityResult(requestCode: Int, resultCode: Int, data: Intent | null): void {
+        if (requestCode == UsbAudioManager.REQUEST_MEDIA_PROJECTION) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                // Wait for service to be bound before creating MediaProjection
+                if (this.isBound && this.mediaProjectionService != null) {
+                    this.createMediaProjection(resultCode, data)
+                } else {
+                    // Retry after a delay if service is not ready
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (this.isBound && this.mediaProjectionService != null) {
+                            this.createMediaProjection(resultCode, data)
+                        } else {
+                            Log.e(UsbAudioManager.TAG, "Service not ready for MediaProjection")
+                        }
+                    }, 500)
+                }
+            } else {
+                Log.e(UsbAudioManager.TAG, "MediaProjection permission denied")
+                this.stopMediaProjectionService()
+            }
+        }
+    }
+    
+    /**
+     * Create MediaProjection with foreground service
+     */
+    private createMediaProjection(resultCode: Int, data: Intent): void {
+        try {
+            // Create MediaProjection through the foreground service
+            if (this.mediaProjectionService != null) {
+                this.mediaProjection = this.mediaProjectionService.createMediaProjection(
+                    this.mediaProjectionManager!!,
+                    resultCode,
+                    data
+                )
+                
+                if (this.mediaProjection != null) {
+                    Log.d(UsbAudioManager.TAG, "MediaProjection created successfully")
+                    this.setupAudioCapture()
+                } else {
+                    Log.e(UsbAudioManager.TAG, "Failed to create MediaProjection")
+                }
+            } else {
+                Log.e(UsbAudioManager.TAG, "MediaProjection service is not available")
+            }
+        } catch (e: Exception) {
+            Log.e(UsbAudioManager.TAG, "Error creating MediaProjection: " + e.getMessage())
+            e.printStackTrace()
+        }
+    }
+    
+    /**
+     * Setup audio capture with MediaProjection
+     */
+    private setupAudioCapture(): void {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Log.e(UsbAudioManager.TAG, "Audio capture requires API 29+")
+            return
+        }
+        
+        if (this.mediaProjection == null) {
+            Log.e(UsbAudioManager.TAG, "MediaProjection is null")
+            return
+        }
+        
+        try {
+            // Create AudioPlaybackCaptureConfiguration
+            val configBuilder = AudioPlaybackCaptureConfiguration.Builder(this.mediaProjection!!)
+            configBuilder.addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            configBuilder.addMatchingUsage(AudioAttributes.USAGE_GAME)
+            configBuilder.addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+            val config = configBuilder.build()
+            
+            // Create AudioRecord with the capture configuration
+            val audioFormatBuilder = AudioFormat.Builder()
+                .setEncoding(this.audioFormat)
+                .setSampleRate(this.sampleRate)
+                .setChannelMask(this.channelConfig)
+            
+            this.audioRecord = AudioRecord.Builder()
+                .setAudioFormat(audioFormatBuilder.build())
+                .setBufferSizeInBytes(this.bufferSize)
+                .setAudioPlaybackCaptureConfig(config)
+                .build()
+            
+            if (this.audioRecord?.getState() == AudioRecord.STATE_INITIALIZED) {
+                Log.d(UsbAudioManager.TAG, "AudioRecord initialized successfully")
+            } else {
+                Log.e(UsbAudioManager.TAG, "Failed to initialize AudioRecord")
+            }
+        } catch (e: Exception) {
+            Log.e(UsbAudioManager.TAG, "Error setting up audio capture: " + e.getMessage())
+            e.printStackTrace()
+        }
+    }
+    
+    /**
+     * Start audio recording
+     */
+    public startRecording(): Boolean {
+        if (this.audioRecord == null) {
+            Log.e(UsbAudioManager.TAG, "AudioRecord is not initialized")
+            return false
+        }
+        
+        if (this.isRecording) {
+            Log.w(UsbAudioManager.TAG, "Already recording")
+            return true
+        }
+        
+        try {
+            this.audioRecord.startRecording()
+            this.isRecording = true
+            
+            // Start recording thread
+            this.recordingThread = Thread({
+                this.recordingLoop()
+            })
+            this.recordingThread?.start()
+            
+            Log.d(UsbAudioManager.TAG, "Recording started")
+            return true
+        } catch (e: Exception) {
+            Log.e(UsbAudioManager.TAG, "Error starting recording: " + e.getMessage())
+            e.printStackTrace()
+            return false
+        }
+    }
+    
+    /**
+     * Recording loop to process audio data
+     */
+    private recordingLoop(): void {
+        val buffer = ByteArray(this.bufferSize)
+        
+        while (this.isRecording) {
+            val bytesRead = this.audioRecord?.read(buffer, 0, buffer.length) ?: 0
+            
+            if (bytesRead > 0) {
+                // Process audio data here
+                this.processAudioData(buffer, bytesRead)
+            } else if (bytesRead < 0) {
+                Log.e(UsbAudioManager.TAG, "Error reading audio data: " + bytesRead)
+            }
+        }
+    }
+    
+    /**
+     * Process captured audio data
+     */
+    private processAudioData(buffer: ByteArray, bytesRead: Int): void {
+        // TODO: Implement audio data processing
+        // This could include:
+        // - Sending to USB audio device
+        // - Saving to file
+        // - Streaming over network
+        // - Real-time processing
+        
+        Log.v(UsbAudioManager.TAG, "Processing " + bytesRead + " bytes of audio data")
+    }
+    
+    /**
+     * Stop audio recording
+     */
+    public stopRecording(): void {
+        this.isRecording = false
+        
+        // Wait for recording thread to finish
+        try {
+            this.recordingThread?.join(1000)
+        } catch (e: InterruptedException) {
+            Log.e(UsbAudioManager.TAG, "Error waiting for recording thread: " + e.getMessage())
+        }
+        
+        // Stop and release AudioRecord
+        if (this.audioRecord != null) {
+            try {
+                this.audioRecord.stop()
+                this.audioRecord.release()
+                this.audioRecord = null
+                Log.d(UsbAudioManager.TAG, "Recording stopped")
+            } catch (e: Exception) {
+                Log.e(UsbAudioManager.TAG, "Error stopping recording: " + e.getMessage())
+            }
+        }
+    }
+    
+    /**
+     * Release all resources
+     */
+    public release(): void {
+        this.stopRecording()
+        
+        if (this.mediaProjection != null) {
+            this.mediaProjection.stop()
+            this.mediaProjection = null
+        }
+        
+        this.stopMediaProjectionService()
+        
+        this.mediaProjectionManager = null
+        this.context = null
+        this.activity = null
+        
+        Log.d(UsbAudioManager.TAG, "Resources released")
+    }
+    
+    /**
+     * Check if currently recording
+     */
+    public isRecording(): Boolean {
+        return this.isRecording
+    }
+    
+    /**
+     * Check if MediaProjection is available
+     */
+    public isMediaProjectionAvailable(): Boolean {
+        return this.mediaProjection != null
+    }
+}
