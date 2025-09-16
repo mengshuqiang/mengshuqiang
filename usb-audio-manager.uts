@@ -1,0 +1,804 @@
+/**
+ * USB音频管理器
+ * 用于管理USB声卡的连接、权限请求和音频处理
+ */
+
+// #ifdef APP-ANDROID
+import Context from 'android.content.Context'
+import UsbManager from 'android.hardware.usb.UsbManager'
+import UsbDevice from 'android.hardware.usb.UsbDevice'
+import UsbInterface from 'android.hardware.usb.UsbInterface'
+import UsbDeviceConnection from 'android.hardware.usb.UsbDeviceConnection'
+import PendingIntent from 'android.app.PendingIntent'
+import Intent from 'android.content.Intent'
+import BroadcastReceiver from 'android.content.BroadcastReceiver'
+import IntentFilter from 'android.content.IntentFilter'
+import AudioManager from 'android.media.AudioManager'
+import AudioDeviceInfo from 'android.media.AudioDeviceInfo'
+import AudioRecord from 'android.media.AudioRecord'
+import AudioTrack from 'android.media.AudioTrack'
+import AudioFormat from 'android.media.AudioFormat'
+import AudioAttributes from 'android.media.AudioAttributes'
+import MediaRecorder from 'android.media.MediaRecorder'
+import Build from 'android.os.Build'
+import Thread from 'java.lang.Thread'
+import Runnable from 'java.lang.Runnable'
+import ByteBuffer from 'java.nio.ByteBuffer'
+import AudioPlaybackCaptureConfiguration from 'android.media.AudioPlaybackCaptureConfiguration'
+import MediaProjectionManager from 'android.media.projection.MediaProjectionManager'
+import MediaProjection from 'android.media.projection.MediaProjection'
+import Activity from 'android.app.Activity'
+import ActivityResultLauncher from 'androidx.activity.result.ActivityResultLauncher'
+import ActivityResultContracts from 'androidx.activity.result.contract.ActivityResultContracts'
+import ActivityResult from 'androidx.activity.result.ActivityResult'
+import Class from 'java.lang.Class'
+import ComponentName from 'android.content.ComponentName'
+import ServiceCompat from 'androidx.core.app.ServiceCompat'
+import Notification from 'android.app.Notification'
+import NotificationManager from 'android.app.NotificationManager'
+import NotificationChannel from 'android.app.NotificationChannel'
+import NotificationCompat from 'androidx.core.app.NotificationCompat'
+import ForeService from './foreService.uts'
+import Handler from 'android.os.Handler'
+import Looper from 'android.os.Looper'
+
+// #endif
+
+export class USBAudioManager {
+	// #ifdef APP-ANDROID
+	private context: Context | null = null
+	private usbManager: UsbManager | null = null
+	private usbDevice: UsbDevice | null = null
+	private audioManager: AudioManager | null = null
+	private audioRecord: AudioRecord | null = null
+	private audioTrack: AudioTrack | null = null
+	private usbReceiver: BroadcastReceiver | null = null
+	private mediaProjectionManager: MediaProjectionManager | null = null
+	private mediaProjection: MediaProjection | null = null
+	private activityResultLauncher: ActivityResultLauncher<Intent> | null = null
+	private isServiceStarted: boolean = false
+	// #endif
+	
+	private isRecording: boolean = false
+	private isConnected: boolean = false
+	private connectionCallback: ((connected: boolean) => void) | null = null
+	private audioDataCallback: ((data: ArrayBuffer) => void) | null = null
+	private recordingThread: Thread | null = null
+	private byteBuffer: ByteBuffer | null = null
+	private screenCapturePermissionCallback: ((granted: boolean) => void) | null = null
+	
+	// 音频参数
+	private sampleRate: number = 44100
+	private channelConfig: number = 2 // 立体声
+	private audioFormat: number = 16 // 16位PCM
+	private bufferSize: number = 0
+	
+	constructor() {
+		this.init()
+	}
+	
+	/**
+	 * 初始化USB音频管理器
+	 */
+	private init(): void {
+		// #ifdef APP-ANDROID
+		try {
+			// 获取应用上下文
+			this.context = UTSAndroid.getAppContext()
+			
+			if (this.context !== null) {
+				// 获取USB管理器
+				this.usbManager = this.context.getSystemService(Context.USB_SERVICE) as UsbManager
+				
+				// 获取音频管理器
+				this.audioManager = this.context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+				
+				// 获取MediaProjectionManager
+				this.mediaProjectionManager = this.context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+				
+				// 计算缓冲区大小
+				this.bufferSize = AudioRecord.getMinBufferSize(
+					this.sampleRate as Int,
+					AudioFormat.CHANNEL_IN_STEREO,
+					AudioFormat.ENCODING_PCM_16BIT
+				)
+				
+				// 注册USB广播接收器
+				this.registerUSBReceiver()
+				
+				// 注册Activity结果监听
+				this.onAppActivityResult()
+			}
+		} catch (e) {
+			console.error('Failed to initialize USB Audio Manager:', e)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 注册USB设备监听器
+	 */
+	private registerUSBReceiver(): void {
+		// #ifdef APP-ANDROID
+		if (this.context === null) return
+		
+		const filter = new IntentFilter()
+		filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+		filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+		filter.addAction("com.uniapp.USB_PERMISSION")
+		
+		// 创建自定义的BroadcastReceiver类
+		class USBReceiver extends BroadcastReceiver {
+			private manager: USBAudioManager
+			
+			constructor(manager: USBAudioManager) {
+				super()
+				this.manager = manager
+			}
+			
+			override onReceive(context: Context, intent: Intent): void {
+				const action = intent.getAction()
+				const device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE) as UsbDevice | null
+				
+				if (device === null) {
+					return
+				}
+				
+				if (UsbManager.ACTION_USB_DEVICE_ATTACHED == action) {
+					if (this.manager.isAudioDevice(device)) {
+						this.manager.setUSBDevice(device)
+						this.manager.requestUSBPermission()
+					}
+				} else if (UsbManager.ACTION_USB_DEVICE_DETACHED == action) {
+					if (device == this.manager.getUSBDevice()) {
+						this.manager.onUSBDeviceDetached()
+					}
+				} else if ("com.uniapp.USB_PERMISSION" == action) {
+					const granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+					if (granted && device == this.manager.getUSBDevice()) {
+						this.manager.onUSBPermissionGranted()
+					}
+				}
+			}
+		}
+		
+		this.usbReceiver = new USBReceiver(this)
+		
+		this.context.registerReceiver(this.usbReceiver, filter)
+		// #endif
+	}
+	
+	/**
+	 * 设置USB设备
+	 */
+	public setUSBDevice(device: UsbDevice): void {
+		this.usbDevice = device
+	}
+	
+	/**
+	 * 获取USB设备
+	 */
+	public getUSBDevice(): UsbDevice | null {
+		return this.usbDevice
+	}
+	
+	/**
+	 * 获取缓冲区大小
+	 */
+	public getBufferSize(): number {
+		return this.bufferSize
+	}
+	
+	/**
+	 * 获取录音状态
+	 */
+	public getRecordingStatus(): boolean {
+		return this.isRecording
+	}
+	
+	/**
+	 * 获取AudioRecord实例
+	 */
+	public getAudioRecord(): AudioRecord | null {
+		return this.audioRecord
+	}
+	
+	/**
+	 * 获取音频数据回调
+	 */
+	public getAudioDataCallback(): ((data: ArrayBuffer) => void) | null {
+		return this.audioDataCallback
+	}
+	
+	/**
+	 * 检查设备是否为音频设备
+	 */
+	public isAudioDevice(device: UsbDevice): boolean {
+		// #ifdef APP-ANDROID
+		if (device === null) return false
+		
+		// 检查设备类
+		if (device.getDeviceClass() == 0 && device.getDeviceSubclass() == 0) {
+			// 检查接口
+			for (let i = 0; i < device.getInterfaceCount(); i++) {
+				const usbInterface = device.getInterface(i as Int)
+				// USB音频设备类为1，子类为1
+				if (usbInterface.getInterfaceClass() == 1 && 
+					usbInterface.getInterfaceSubclass() == 1) {
+					return true
+				}
+			}
+		}
+		
+		// 检查特定厂商ID（常见USB声卡厂商）
+		const vendorId = device.getVendorId()
+		const knownAudioVendors = [0x1b1c, 0x0d8c, 0x08bb, 0x046d, 0x041e]
+		
+		return knownAudioVendors.includes(vendorId)
+		// #endif
+		
+		return false
+	}
+	
+	/**
+	 * 请求USB设备权限
+	 */
+	public requestUSBPermission(): void {
+		// #ifdef APP-ANDROID
+		if (this.usbDevice === null || this.usbManager === null || this.context === null) return
+		
+		if (this.usbManager.hasPermission(this.usbDevice)) {
+			this.onUSBPermissionGranted()
+		} else {
+			const permissionIntent = PendingIntent.getBroadcast(
+				this.context, 
+				0,
+				new Intent("com.uniapp.USB_PERMISSION"),
+				PendingIntent.FLAG_IMMUTABLE
+			)
+			this.usbManager.requestPermission(this.usbDevice, permissionIntent)
+		}
+		// #endif
+	}
+	
+	/**
+	 * USB权限授予后的处理
+	 */
+	public onUSBPermissionGranted(): void {
+		console.log('USB permission granted')
+		this.isConnected = true
+		
+		if (this.connectionCallback !== null) {
+			this.connectionCallback(true)
+		}
+	}
+	
+	/**
+	 * USB设备断开连接处理
+	 */
+	public onUSBDeviceDetached(): void {
+		console.log('USB device detached')
+		this.isConnected = false
+		this.usbDevice = null
+		
+		if (this.isRecording !== null) {
+			this.stopRecording()
+		}
+		
+		if (this.connectionCallback !== null) {
+			this.connectionCallback(false)
+		}
+	}
+	
+	/**
+	 * 设置音频设备
+	 */
+	public setupAudioDevices(): void {
+		// #ifdef APP-ANDROID
+		if (this.audioManager === null) return
+		
+		// 获取所有音频设备
+		const devices = this.audioManager.getDevices(AudioManager.GET_DEVICES_ALL as Int)
+		
+		let usbInputDevice: AudioDeviceInfo | null = null
+		let usbOutputDevice: AudioDeviceInfo | null = null
+		
+		for (const device of devices) {
+			const deviceType = device.getType() as Int
+			
+			// 检查是否为USB音频设备
+			if (deviceType == AudioDeviceInfo.TYPE_USB_DEVICE ||
+				deviceType == AudioDeviceInfo.TYPE_USB_HEADSET ||
+				deviceType == AudioDeviceInfo.TYPE_USB_ACCESSORY) {
+				
+				if (device.isSink()) {
+					usbOutputDevice = device
+					console.log('Found USB output device:', device.getProductName())
+				}
+				
+				if (device.isSource()) {
+					usbInputDevice = device
+					console.log('Found USB input device:', device.getProductName())
+				}
+			}
+		}
+		
+		// 创建音频录制和播放实例
+		if (usbInputDevice !== null || usbOutputDevice !== null) {
+			this.createAudioInstances(usbInputDevice as any, usbOutputDevice as any)
+		}
+		// #endif
+	}
+
+	/**
+	 * 创建音频录制和播放实例
+	 */
+	private createAudioInstances(inputDevice: any, outputDevice: any): void {
+		if (this.audioManager !== null) {
+			this.audioManager.setParameters("audio_devices_out=4") // 4通常表示USB音频
+		}
+		// #ifdef APP-ANDROID
+		try {
+			// 创建AudioRecord实例，使用AudioPlaybackCapture捕获系统音频
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+				// Android 10及以上版本支持AudioPlaybackCapture
+				if (this.mediaProjection !== null) {
+					const mediaProjection = this.mediaProjection
+					// 创建AudioPlaybackCaptureConfiguration
+					const captureConfig = new AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+						.addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+						.addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+						.addMatchingUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+						.addMatchingUsage(AudioAttributes.USAGE_GAME)
+						.addMatchingUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+						.addMatchingUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+						.addMatchingUsage(AudioAttributes.USAGE_ASSISTANT)
+						.addMatchingUsage(AudioAttributes.USAGE_ALARM)
+						.addMatchingUsage(AudioAttributes.USAGE_NOTIFICATION)
+						.addMatchingUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+						.addMatchingUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_REQUEST)
+						.addMatchingUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
+						.addMatchingUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_DELAYED)
+						.addMatchingUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+						.addMatchingUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+						.addMatchingUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+						.addMatchingUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING)
+						.build()
+					
+					const recordBuilder = new AudioRecord.Builder()
+						.setAudioSource(MediaRecorder.AudioSource.UNPROCESSED) // 使用未处理的音频源
+						.setAudioFormat(new AudioFormat.Builder()
+							.setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+							.setSampleRate(this.sampleRate as Int)
+							.setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+							.build())
+						.setBufferSizeInBytes((this.bufferSize * 2) as Int)
+						.setAudioPlaybackCaptureConfig(captureConfig)
+					
+					this.audioRecord = recordBuilder.build()
+					console.log('AudioRecord created with AudioPlaybackCapture configuration')
+				} else {
+					console.warn('MediaProjection not available, falling back to default audio source')
+					// 如果没有MediaProjection，回退到默认音频源
+					this.createDefaultAudioRecord()
+				}
+			} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+				// Android 6.0-9.0，不支持AudioPlaybackCapture
+				console.warn('AudioPlaybackCapture not supported on this Android version, using default audio source')
+				this.createDefaultAudioRecord()
+			} else {
+				// 旧版本Android
+				this.createDefaultAudioRecord()
+			}
+			
+			// 创建AudioTrack实例
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+				const trackBuilder = new AudioTrack.Builder()
+					.setAudioAttributes(new AudioAttributes.Builder()
+						.setUsage(AudioAttributes.USAGE_MEDIA)
+						.setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+						.build())
+					.setAudioFormat(new AudioFormat.Builder()
+						.setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+						.setSampleRate(this.sampleRate as Int)
+						.setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+						.build())
+					.setBufferSizeInBytes((this.bufferSize * 2) as Int)
+				
+				this.audioTrack = trackBuilder.build()
+			} else {
+				// 旧版本Android
+				this.audioTrack = new AudioTrack(
+					AudioManager.STREAM_MUSIC,
+					this.sampleRate as Int,
+					AudioFormat.CHANNEL_OUT_STEREO,
+					AudioFormat.ENCODING_PCM_16BIT,
+					(this.bufferSize * 2) as Int,
+					AudioTrack.MODE_STREAM
+				)
+			}
+			
+			console.log('Audio instances created successfully')
+		} catch (e) {
+			console.error('Failed to create audio instances:', e)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 创建默认的AudioRecord实例（不使用AudioPlaybackCapture）
+	 */
+	private createDefaultAudioRecord(): void {
+		// #ifdef APP-ANDROID
+		try {
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+				const recordBuilder = new AudioRecord.Builder()
+					.setAudioSource(MediaRecorder.AudioSource.DEFAULT)
+					.setAudioFormat(new AudioFormat.Builder()
+						.setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+						.setSampleRate(this.sampleRate as Int)
+						.setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+						.build())
+					.setBufferSizeInBytes((this.bufferSize * 2) as Int)
+				
+				this.audioRecord = recordBuilder.build()
+				console.log('Default AudioRecord created')
+			} else {
+				// 旧版本Android
+				this.audioRecord = new AudioRecord(
+					MediaRecorder.AudioSource.DEFAULT,
+					this.sampleRate as Int,
+					AudioFormat.CHANNEL_IN_STEREO,
+					AudioFormat.ENCODING_PCM_16BIT,
+					(this.bufferSize * 2) as Int
+				)
+				console.log('Legacy AudioRecord created')
+			}
+		} catch (e) {
+			console.error('Failed to create default AudioRecord:', e)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 检查USB连接状态
+	 */
+	public checkConnection(): boolean {
+		// #ifdef APP-ANDROID
+		if (this.usbManager === null) return false
+		const deviceList = this.usbManager.getDeviceList()
+		// @ts-ignore
+		const devices = deviceList?.values ?? []
+		
+		for (const device of devices) {
+			if (this.isAudioDevice(device)) {
+				this.usbDevice = device
+				this.requestUSBPermission()
+				return true
+			}
+		}
+		// #endif
+		
+		return false
+	}
+	
+	/**
+	 * 设置连接状态回调
+	 */
+	public onConnectionChange(callback: (connected: boolean) => void): void {
+		this.connectionCallback = callback
+	}
+	
+	/**
+	 * 注册Activity结果监听
+	 */
+	private onAppActivityResult(): void {
+		// #ifdef APP-ANDROID
+		// 请求结果监听 
+		UTSAndroid.onAppActivityResult((requestCode: Int, resultCode: Int, data: Intent | null) => {
+			this.onScreenCapturePermissionResult(requestCode, resultCode, data)
+		})
+		// #endif
+	}
+	
+	/**
+	 * 请求屏幕录制权限（用于AudioPlaybackCapture）
+	 */
+	public requestScreenCapturePermission(callback: (granted: boolean) => void): void {
+		// #ifdef APP-ANDROID
+		if (this.mediaProjectionManager === null) {
+			callback(false)
+			return
+		}
+		
+		this.screenCapturePermissionCallback = callback
+
+		try {
+			// 使用 UTSAndroid.getUniActivity() 获取当前Activity
+			const activity = UTSAndroid.getUniActivity()
+			
+			if (activity !== null) {
+				// 先启动前台服务
+				this.startMediaProjectionService(activity)
+				
+				// 延迟一下确保服务已启动，然后请求屏幕录制权限
+				const handler = new Handler(Looper.getMainLooper())
+				handler.postDelayed(new Runnable({
+					run: () => {
+						const captureIntent = this.mediaProjectionManager!.createScreenCaptureIntent()
+						activity.startActivityForResult(captureIntent, 1001)
+						console.log('Screen capture permission request started')
+					}
+				}), 500) // 延迟500ms
+			} else {
+				console.error('Cannot get current Activity')
+				callback(false)
+			}
+		} catch (e) {
+			console.error('Failed to request screen capture permission:', e)
+			callback(false)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 启动前台服务
+	 */
+	private startMediaProjectionService(activity: Activity): void {
+		// #ifdef APP-ANDROID
+		if (this.context !== null && !this.isServiceStarted) {
+			try {
+				const serviceIntent = new Intent(activity, ForeService().javaClass)
+				
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+					console.log("Starting foreground service for MediaProjection")
+					this.context.startForegroundService(serviceIntent)
+				} else {
+					this.context.startService(serviceIntent)
+				}
+				
+				this.isServiceStarted = true
+				console.log("MediaProjection service started successfully")
+			} catch (e) {
+				console.error("Failed to start MediaProjection service:", e)
+			}
+		}
+		// #endif
+	}
+	
+	/**
+	 * 停止前台服务
+	 */
+	private stopMediaProjectionService(): void {
+		// #ifdef APP-ANDROID
+		if (this.context !== null && this.isServiceStarted) {
+			try {
+				const activity = UTSAndroid.getUniActivity()
+				if (activity !== null) {
+					const serviceIntent = new Intent(activity, ForeService().javaClass)
+					this.context.stopService(serviceIntent)
+					this.isServiceStarted = false
+					console.log("MediaProjection service stopped")
+				}
+			} catch (e) {
+				console.error("Failed to stop MediaProjection service:", e)
+			}
+		}
+		// #endif
+	}
+	
+	/**
+	 * 处理屏幕录制权限结果
+	 */
+	public onScreenCapturePermissionResult(requestCode: Int, resultCode: Int, data: Intent | null): void {
+		// 不是我们自己发的请求不处理
+		if (requestCode !== 1001) return
+		
+		// #ifdef APP-ANDROID
+		if (resultCode === Activity.RESULT_OK && data !== null) {
+			try {
+				// 权限被授予，创建MediaProjection
+				// 确保服务已经在运行
+				if (this.isServiceStarted && this.mediaProjectionManager !== null) {
+					this.mediaProjection = this.mediaProjectionManager.getMediaProjection(resultCode, data)
+					
+					if (this.mediaProjection !== null) {
+						console.log('MediaProjection created successfully')
+						this.screenCapturePermissionCallback?.(true)
+						
+						// 设置音频设备
+						this.setupAudioDevices()
+					} else {
+						console.error('Failed to create MediaProjection')
+						this.screenCapturePermissionCallback?.(false)
+						this.stopMediaProjectionService()
+					}
+				} else {
+					console.error('Service not started or MediaProjectionManager is null')
+					this.screenCapturePermissionCallback?.(false)
+					this.stopMediaProjectionService()
+				}
+			} catch (e) {
+				console.error('Error creating MediaProjection:', e)
+				this.screenCapturePermissionCallback?.(false)
+				this.stopMediaProjectionService()
+			}
+		} else {
+			console.log('Screen capture permission denied')
+			this.screenCapturePermissionCallback?.(false)
+			this.stopMediaProjectionService()
+		}
+		// #endif
+	}
+	
+	/**
+	 * 检查是否支持AudioPlaybackCapture
+	 */
+	public isAudioPlaybackCaptureSupported(): boolean {
+		// #ifdef APP-ANDROID
+		return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+		// #endif
+		return false
+	}
+	
+	/**
+	 * 获取MediaProjection状态
+	 */
+	public hasMediaProjection(): boolean {
+		// #ifdef APP-ANDROID
+		return this.mediaProjection !== null
+		// #endif
+		return false
+	}
+	
+	/**
+	 * 开始录音
+	 */
+	public startRecording(callback: (data: ArrayBuffer) => void): void {
+		// #ifdef APP-ANDROID
+		if (this.audioRecord === null || this.isRecording) return
+		
+		this.audioDataCallback = callback
+		this.isRecording = true
+		
+		try {
+			this.audioRecord.startRecording()
+			
+			// 创建录音线程
+			class RecordingRunnable implements Runnable {
+				private manager: USBAudioManager
+				
+				constructor(manager: USBAudioManager) {
+					this.manager = manager
+				}
+				
+				override run(): void {
+					const bufferSize = this.manager.getBufferSize() as Int
+					const byteBuffer = new ByteArray(bufferSize)
+					
+					while (this.manager.getRecordingStatus()) {
+						const bytesRead = this.manager.getAudioRecord()?.read(byteBuffer, 0 as Int, bufferSize) as Int
+						
+						if (bytesRead > 0 && this.manager.getAudioDataCallback() !== null) {
+							console.log("Audio data read:", bytesRead, "bytes")
+							
+							const byteBuffer2 = ByteBuffer.wrap(byteBuffer)
+							this.manager.playAudio(byteBuffer2)
+							
+							// byteArray转换为ArrayBuffer
+							const arrayBuffer = new ArrayBuffer(bytesRead as number)
+							const view = new Uint8Array(arrayBuffer)
+							for (let i = 0; i < (bytesRead as number); i++) {
+								view[i] = byteBuffer[i]
+							}
+							this.manager.getAudioDataCallback()?.(arrayBuffer)
+						}
+					}
+				}
+			}
+			
+			const runnable = new RecordingRunnable(this)
+			this.recordingThread = new Thread(runnable)
+			this.recordingThread.start()
+			console.log('Recording started')
+		} catch (e) {
+			console.error('Failed to start recording:', e)
+			this.isRecording = false
+		}
+		// #endif
+	}
+	
+	/**
+	 * 停止录音
+	 */
+	public stopRecording(): void {
+		// #ifdef APP-ANDROID
+		this.isRecording = false
+		
+		if (this.audioRecord !== null) {
+			try {
+				this.audioRecord.stop()
+				console.log('Recording stopped')
+			} catch (e) {
+				console.error('Failed to stop recording:', e)
+			}
+		}
+		
+		if (this.recordingThread !== null) {
+			try {
+				this.recordingThread.join(1000)
+			} catch (e) {
+				console.error('Failed to join recording thread:', e)
+			}
+			this.recordingThread = null
+		}
+		// #endif
+	}
+	
+	/**
+	 * 播放音频数据
+	 */
+	public playAudio(audioData: ByteBuffer): void {
+		// #ifdef APP-ANDROID
+		if (this.audioTrack === null || audioData === null) return
+		
+		try {
+			if (this.audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) {
+				this.audioTrack.play()
+			}
+			
+			this.audioTrack.write(audioData, audioData.limit() as Int, AudioTrack.WRITE_BLOCKING)
+		} catch (e) {
+			console.error('Failed to play audio:', e)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 设置音量
+	 */
+	public setVolume(volume: number): void {
+		// #ifdef APP-ANDROID
+		if (this.audioTrack !== null) {
+			const clampedVolume = Math.max(0, Math.min(1, volume)) as Float
+			this.audioTrack.setVolume(clampedVolume)
+		}
+		// #endif
+	}
+	
+	/**
+	 * 释放资源
+	 */
+	public release(): void {
+		this.stopRecording()
+		
+		// #ifdef APP-ANDROID
+		if (this.audioRecord !== null) {
+			this.audioRecord.release()
+			this.audioRecord = null
+		}
+		
+		if (this.audioTrack !== null) {
+			this.audioTrack.release()
+			this.audioTrack = null
+		}
+		
+		if (this.mediaProjection !== null) {
+			this.mediaProjection.stop()
+			this.mediaProjection = null
+		}
+		
+		// 停止前台服务
+		this.stopMediaProjectionService()
+
+		if (this.usbReceiver !== null && this.context !== null) {
+			this.context.unregisterReceiver(this.usbReceiver)
+			this.usbReceiver = null
+		}
+		// #endif
+		
+		this.connectionCallback = null
+		this.audioDataCallback = null
+		this.screenCapturePermissionCallback = null
+	}
+}
