@@ -2,22 +2,26 @@
   <view class="container">
     <view class="header">
       <text class="title">前台服务示例</text>
-      <text class="subtitle">FOREGROUND_SERVICE_TYPE_NONE 配置</text>
+      <text class="subtitle">使用 UTSAndroid.getAppContext()</text>
     </view>
     
     <view class="content">
       <view class="info-card">
         <text class="info-title">服务配置说明</text>
-        <text class="info-text">此应用已配置 FOREGROUND_SERVICE_TYPE_NONE</text>
+        <text class="info-text">使用 FOREGROUND_SERVICE_TYPE_NONE</text>
         <text class="info-text">适用于 Android 14 (API 34) 及以上版本</text>
+        <text class="info-text">通过 UTS 插件实现原生服务调用</text>
       </view>
       
       <view class="button-group">
-        <button class="btn btn-primary" @click="startForegroundService">
+        <button class="btn btn-primary" @click="startService">
           启动前台服务
         </button>
-        <button class="btn btn-secondary" @click="stopForegroundService">
+        <button class="btn btn-secondary" @click="stopService">
           停止前台服务
+        </button>
+        <button class="btn btn-info" @click="checkServiceStatus">
+          检查服务状态
         </button>
       </view>
       
@@ -26,6 +30,18 @@
         <text :class="['status-text', serviceRunning ? 'running' : 'stopped']">
           {{ serviceRunning ? '运行中' : '已停止' }}
         </text>
+        <text class="status-detail" v-if="lastCheckTime">
+          最后检查: {{ lastCheckTime }}
+        </text>
+      </view>
+      
+      <view class="code-card">
+        <text class="code-title">核心代码</text>
+        <view class="code-block">
+          <text class="code-text">// 使用 UTSAndroid API 启动服务</text>
+          <text class="code-text">UTSAndroid.getAppContext()!</text>
+          <text class="code-text">  .startForegroundService(serviceIntent)</text>
+        </view>
       </view>
       
       <view class="log-card">
@@ -41,106 +57,219 @@
 </template>
 
 <script>
+// 导入 UTS 插件
+import { 
+  startForegroundService, 
+  stopForegroundService, 
+  isForegroundServiceRunning 
+} from '@/uni_modules/foreground-service/utssdk/app-android/index.uts';
+
 export default {
   data() {
     return {
       serviceRunning: false,
-      logs: []
+      lastCheckTime: '',
+      logs: [],
+      checkInterval: null
     }
   },
+  
   methods: {
-    startForegroundService() {
-      // #ifdef APP-PLUS
+    /**
+     * 启动前台服务
+     */
+    startService() {
+      this.addLog('正在启动前台服务...');
+      
+      // #ifdef APP-ANDROID
       try {
-        // 获取原生插件或使用 plus.android
-        const main = plus.android.runtimeMainActivity();
-        const Intent = plus.android.importClass("android.content.Intent");
-        const Build = plus.android.importClass("android.os.Build");
+        // 调用 UTS 插件方法，内部使用 UTSAndroid.getAppContext()
+        const success = startForegroundService();
         
-        // 创建服务Intent
-        const serviceIntent = new Intent();
-        serviceIntent.setClassName(main, "io.dcloud.uniapp.service.MyForegroundService");
-        serviceIntent.setAction("com.example.app.START_FOREGROUND_SERVICE");
-        
-        // Android 8.0+ 需要使用 startForegroundService
-        if (Build.VERSION.SDK_INT >= 26) {
-          main.startForegroundService(serviceIntent);
+        if (success) {
+          this.serviceRunning = true;
+          this.addLog('✅ 前台服务已启动 (TYPE_NONE)');
+          this.addLog('使用 UTSAndroid.getAppContext() API');
+          
+          // 启动状态检查定时器
+          this.startStatusCheck();
+          
+          uni.showToast({
+            title: '服务已启动',
+            icon: 'success',
+            duration: 2000
+          });
         } else {
-          main.startService(serviceIntent);
+          this.addLog('❌ 启动服务失败');
+          uni.showToast({
+            title: '启动失败',
+            icon: 'error',
+            duration: 2000
+          });
         }
-        
-        this.serviceRunning = true;
-        this.addLog('前台服务已启动 (TYPE_NONE)');
-        
-        uni.showToast({
-          title: '服务已启动',
-          icon: 'success'
-        });
       } catch (e) {
-        this.addLog('启动服务失败: ' + e.message);
+        this.addLog(`❌ 启动服务异常: ${e.message}`);
+        console.error('启动服务异常:', e);
         uni.showToast({
-          title: '启动失败',
-          icon: 'error'
+          title: '启动异常',
+          icon: 'none',
+          duration: 2000
         });
       }
       // #endif
       
-      // #ifndef APP-PLUS
-      this.addLog('此功能仅在 App 端可用');
+      // #ifndef APP-ANDROID
+      this.addLog('⚠️ 此功能仅在 Android 端可用');
       uni.showToast({
-        title: '仅支持App端',
-        icon: 'none'
+        title: '仅支持Android',
+        icon: 'none',
+        duration: 2000
       });
       // #endif
     },
     
-    stopForegroundService() {
-      // #ifdef APP-PLUS
+    /**
+     * 停止前台服务
+     */
+    stopService() {
+      this.addLog('正在停止前台服务...');
+      
+      // #ifdef APP-ANDROID
       try {
-        const main = plus.android.runtimeMainActivity();
-        const Intent = plus.android.importClass("android.content.Intent");
+        const success = stopForegroundService();
         
-        const serviceIntent = new Intent();
-        serviceIntent.setClassName(main, "io.dcloud.uniapp.service.MyForegroundService");
-        
-        main.stopService(serviceIntent);
-        
-        this.serviceRunning = false;
-        this.addLog('前台服务已停止');
-        
-        uni.showToast({
-          title: '服务已停止',
-          icon: 'success'
-        });
+        if (success) {
+          this.serviceRunning = false;
+          this.addLog('✅ 前台服务已停止');
+          
+          // 停止状态检查
+          this.stopStatusCheck();
+          
+          uni.showToast({
+            title: '服务已停止',
+            icon: 'success',
+            duration: 2000
+          });
+        } else {
+          this.addLog('❌ 停止服务失败');
+          uni.showToast({
+            title: '停止失败',
+            icon: 'error',
+            duration: 2000
+          });
+        }
       } catch (e) {
-        this.addLog('停止服务失败: ' + e.message);
+        this.addLog(`❌ 停止服务异常: ${e.message}`);
+        console.error('停止服务异常:', e);
         uni.showToast({
-          title: '停止失败',
-          icon: 'error'
+          title: '停止异常',
+          icon: 'none',
+          duration: 2000
         });
       }
       // #endif
       
-      // #ifndef APP-PLUS
-      this.addLog('此功能仅在 App 端可用');
+      // #ifndef APP-ANDROID
+      this.addLog('⚠️ 此功能仅在 Android 端可用');
       uni.showToast({
-        title: '仅支持App端',
-        icon: 'none'
+        title: '仅支持Android',
+        icon: 'none',
+        duration: 2000
       });
       // #endif
     },
     
+    /**
+     * 检查服务状态
+     */
+    checkServiceStatus() {
+      // #ifdef APP-ANDROID
+      try {
+        const isRunning = isForegroundServiceRunning();
+        this.serviceRunning = isRunning;
+        this.lastCheckTime = new Date().toLocaleTimeString();
+        
+        const status = isRunning ? '运行中' : '已停止';
+        this.addLog(`📊 服务状态: ${status}`);
+        
+        uni.showToast({
+          title: `服务${status}`,
+          icon: 'none',
+          duration: 1500
+        });
+      } catch (e) {
+        this.addLog(`❌ 检查状态异常: ${e.message}`);
+        console.error('检查状态异常:', e);
+      }
+      // #endif
+      
+      // #ifndef APP-ANDROID
+      this.addLog('⚠️ 此功能仅在 Android 端可用');
+      // #endif
+    },
+    
+    /**
+     * 启动定时状态检查
+     */
+    startStatusCheck() {
+      this.stopStatusCheck();
+      this.checkInterval = setInterval(() => {
+        this.checkServiceStatus();
+      }, 5000); // 每5秒检查一次
+    },
+    
+    /**
+     * 停止定时状态检查
+     */
+    stopStatusCheck() {
+      if (this.checkInterval) {
+        clearInterval(this.checkInterval);
+        this.checkInterval = null;
+      }
+    },
+    
+    /**
+     * 添加日志
+     */
     addLog(message: string) {
       const timestamp = new Date().toLocaleTimeString();
       this.logs.unshift(`[${timestamp}] ${message}`);
-      if (this.logs.length > 20) {
-        this.logs.pop();
+      
+      // 限制日志数量
+      if (this.logs.length > 30) {
+        this.logs = this.logs.slice(0, 30);
       }
+    },
+    
+    /**
+     * 获取系统信息
+     */
+    getSystemInfo() {
+      const info = uni.getSystemInfoSync();
+      this.addLog(`📱 系统: ${info.platform} ${info.system}`);
+      this.addLog(`📦 SDK版本: ${info.SDKVersion || 'N/A'}`);
+      
+      // #ifdef APP-ANDROID
+      this.addLog('✅ Android 平台已检测');
+      this.addLog('📌 使用 UTSAndroid API');
+      // #endif
     }
   },
+  
   onLoad() {
-    this.addLog('应用已启动');
-    this.addLog('配置: FOREGROUND_SERVICE_TYPE_NONE');
+    this.addLog('🚀 应用已启动');
+    this.addLog('📋 配置: FOREGROUND_SERVICE_TYPE_NONE');
+    this.getSystemInfo();
+    
+    // 初始检查服务状态
+    setTimeout(() => {
+      this.checkServiceStatus();
+    }, 500);
+  },
+  
+  onUnload() {
+    // 页面卸载时停止定时器
+    this.stopStatusCheck();
   }
 }
 </script>
@@ -152,19 +281,19 @@ export default {
 }
 
 .header {
-  background-color: #007AFF;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding: 40rpx;
   align-items: center;
 }
 
 .title {
-  font-size: 36rpx;
+  font-size: 40rpx;
   color: #ffffff;
   font-weight: bold;
 }
 
 .subtitle {
-  font-size: 24rpx;
+  font-size: 26rpx;
   color: #e0e0e0;
   margin-top: 10rpx;
 }
@@ -173,15 +302,15 @@ export default {
   padding: 30rpx;
 }
 
-.info-card, .status-card, .log-card {
+.info-card, .status-card, .code-card, .log-card {
   background-color: #ffffff;
-  border-radius: 16rpx;
+  border-radius: 20rpx;
   padding: 30rpx;
   margin-bottom: 30rpx;
-  box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.08);
 }
 
-.info-title, .status-title, .log-title {
+.info-title, .status-title, .code-title, .log-title {
   font-size: 32rpx;
   font-weight: bold;
   color: #333333;
@@ -192,30 +321,35 @@ export default {
   font-size: 28rpx;
   color: #666666;
   margin-bottom: 10rpx;
+  line-height: 1.5;
 }
 
 .button-group {
-  flex-direction: row;
-  justify-content: space-between;
   margin-bottom: 30rpx;
 }
 
 .btn {
-  flex: 1;
+  width: 100%;
   height: 88rpx;
   border-radius: 44rpx;
   font-size: 30rpx;
   font-weight: bold;
-  margin: 0 15rpx;
+  margin-bottom: 20rpx;
+  border: none;
 }
 
 .btn-primary {
-  background-color: #007AFF;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: #ffffff;
 }
 
 .btn-secondary {
-  background-color: #FF3B30;
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  color: #ffffff;
+}
+
+.btn-info {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
   color: #ffffff;
 }
 
@@ -224,7 +358,7 @@ export default {
   font-weight: bold;
   text-align: center;
   padding: 20rpx;
-  border-radius: 10rpx;
+  border-radius: 15rpx;
 }
 
 .status-text.running {
@@ -235,6 +369,27 @@ export default {
 .status-text.stopped {
   color: #F44336;
   background-color: #FFEBEE;
+}
+
+.status-detail {
+  font-size: 24rpx;
+  color: #999999;
+  text-align: center;
+  margin-top: 10rpx;
+}
+
+.code-block {
+  background-color: #2d2d2d;
+  border-radius: 10rpx;
+  padding: 20rpx;
+  margin-top: 10rpx;
+}
+
+.code-text {
+  font-family: 'Courier New', monospace;
+  font-size: 24rpx;
+  color: #61dafb;
+  line-height: 1.8;
 }
 
 .log-scroll {
@@ -249,5 +404,6 @@ export default {
   color: #666666;
   margin-bottom: 10rpx;
   line-height: 1.5;
+  font-family: 'Courier New', monospace;
 }
 </style>

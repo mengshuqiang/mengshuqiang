@@ -1,0 +1,31 @@
+{
+  "android": {
+    "abis": ["armeabi-v7a", "arm64-v8a"],
+    "minSdkVersion": 21,
+    "targetSdkVersion": 34,
+    "permissions": [
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_TYPE_NONE",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.WAKE_LOCK"
+    ],
+    "features": [],
+    "dependencies": [
+      "androidx.core:core:1.12.0",
+      "androidx.appcompat:appcompat:1.6.1"
+    ],
+    "services": [
+      {
+        "name": "io.dcloud.uniapp.service.MyForegroundService",
+        "exported": false,
+        "enabled": true,
+        "foregroundServiceType": "none",
+        "intentFilters": [
+          {
+            "actions": ["com.example.app.START_FOREGROUND_SERVICE"]
+          }
+        ]
+      }
+    ]
+  }
+}

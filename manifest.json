@@ -83,5 +83,10 @@
     "uvue": {
       "flex-direction": "column"
     }
+  },
+  "uni_modules": {
+    "foreground-service": {
+      "enable": true
+    }
   }
 }
