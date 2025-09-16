@@ -1,0 +1,87 @@
+import NotificationChannel from 'android.app.NotificationChannel'
+import NotificationCompat from 'androidx.core.app.NotificationCompat'
+import Service from 'android.app.Service'
+import Context from 'android.content.Context'
+import NotificationManager from 'android.app.NotificationManager'
+import Notification from 'android.app.Notification'
+import Build from 'android.os.Build'
+import System from 'java.lang.System'
+import Intent from 'android.content.Intent'
+import IBinder from 'android.os.IBinder'
+import ServiceInfo from 'android.content.pm.ServiceInfo'
+import PendingIntent from 'android.app.PendingIntent'
+import R from 'android.R'
+
+class ForeService extends Service {
+
+	constructor() {
+		super()
+	}
+
+	override onCreate(): void {
+		console.log("ForeService onCreate")
+		super.onCreate()
+	}
+
+	override onBind(_intent?: Intent): IBinder | null {
+		console.log("ForeService onBind")
+		return null
+	}
+
+	override onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
+		console.log("ForeService onStartCommand")
+
+		// 创建通知渠道（Android 8.0+）
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+			const channelId = "MediaProjectionServiceChannel"
+			const channelName = "Media Projection Service"
+			const importance = NotificationManager.IMPORTANCE_LOW
+			const channel = new NotificationChannel(channelId, channelName, importance)
+			channel.setDescription("Used for capturing system audio")
+			
+			const notificationManager = this.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+			notificationManager.createNotificationChannel(channel)
+		}
+
+		// 创建通知
+		const mBuilder = new NotificationCompat.Builder(this, "MediaProjectionServiceChannel")
+		mBuilder.setContentTitle("音频捕获服务")
+		mBuilder.setContentText("正在捕获系统音频")
+		mBuilder.setSmallIcon(R.drawable.ic_dialog_info) // 使用系统默认图标
+		mBuilder.setPriority(NotificationCompat.PRIORITY_LOW)
+		mBuilder.setOngoing(true) // 设置为持续通知
+		mBuilder.setAutoCancel(false)
+		mBuilder.setWhen(System.currentTimeMillis())
+
+		// 创建一个空的PendingIntent（可选：可以设置点击通知时的行为）
+		const notificationIntent = new Intent(this, this.getClass())
+		const pendingIntent = PendingIntent.getActivity(
+			this,
+			0,
+			notificationIntent,
+			PendingIntent.FLAG_IMMUTABLE
+		)
+		mBuilder.setContentIntent(pendingIntent)
+
+		const notification = mBuilder.build()
+
+		// 启动前台服务，Android 10+ 需要指定服务类型
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+			// Android 10及以上，指定MediaProjection服务类型
+			this.startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+		} else {
+			// Android 10以下，使用普通前台服务
+			this.startForeground(1, notification)
+		}
+
+		return Service.START_STICKY
+	}
+
+	override onDestroy(): void {
+		console.log("ForeService onDestroy")
+		this.stopForeground(true) // 停止前台服务并移除通知
+		super.onDestroy()
+	}
+}
+
+export default ForeService

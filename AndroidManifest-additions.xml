@@ -1,0 +1,15 @@
+<!-- Add these permissions and service declarations to your AndroidManifest.xml -->
+
+<!-- Permissions -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+<uses-permission android:name="android.permission.USB_PERMISSION" />
+
+<!-- Inside the <application> tag, add the service declaration -->
+<service
+    android:name=".ForeService"
+    android:enabled="true"
+    android:exported="false"
+    android:foregroundServiceType="mediaProjection" />
