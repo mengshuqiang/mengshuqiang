@@ -1,0 +1,38 @@
+<script>
+export default {
+  onLaunch: function() {
+    console.log('App Launch')
+    
+    // #ifdef APP-PLUS
+    // 检查 Android 版本
+    if (uni.getSystemInfoSync().platform === 'android') {
+      const Build = plus.android.importClass("android.os.Build");
+      if (Build.VERSION.SDK_INT >= 34) {
+        console.log('Android 14+ detected, using FOREGROUND_SERVICE_TYPE_NONE');
+      }
+    }
+    // #endif
+  },
+  onShow: function() {
+    console.log('App Show')
+  },
+  onHide: function() {
+    console.log('App Hide')
+  }
+}
+</script>
+
+<style>
+/* 全局样式 */
+page {
+  background-color: #f5f5f5;
+}
+
+button {
+  margin: 10rpx;
+}
+
+text {
+  line-height: 1.5;
+}
+</style>

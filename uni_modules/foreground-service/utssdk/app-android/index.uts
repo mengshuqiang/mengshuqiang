@@ -1,0 +1,222 @@
+import Intent from 'android.content.Intent';
+import Build from 'android.os.Build';
+import Service from 'android.app.Service';
+import IBinder from 'android.os.IBinder';
+import Notification from 'android.app.Notification';
+import NotificationChannel from 'android.app.NotificationChannel';
+import NotificationManager from 'android.app.NotificationManager';
+import NotificationCompat from 'androidx.core.app.NotificationCompat';
+import PendingIntent from 'android.app.PendingIntent';
+import ServiceCompat from 'androidx.core.app.ServiceCompat';
+import ServiceInfo from 'android.content.pm.ServiceInfo';
+import Context from 'android.content.Context';
+
+const CHANNEL_ID = "ForegroundServiceChannel";
+const NOTIFICATION_ID = 1001;
+
+/**
+ * 前台服务类
+ */
+export class MyForegroundService extends Service {
+    
+    override onCreate() : void {
+        super.onCreate();
+        console.log("MyForegroundService", "onCreate");
+        this.createNotificationChannel();
+    }
+    
+    override onStartCommand(intent : Intent | null, flags : Int, startId : Int) : Int {
+        console.log("MyForegroundService", "onStartCommand");
+        
+        // 创建通知
+        const notification = this.createNotification();
+        
+        // 启动前台服务，根据 Android 版本使用不同的方法
+        if (Build.VERSION.SDK_INT >= 34) {
+            // Android 14+ 使用 ServiceCompat 并指定 TYPE_NONE
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE
+            );
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Android 10-13
+            this.startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE);
+        } else {
+            // Android 9 及以下
+            this.startForeground(NOTIFICATION_ID, notification);
+        }
+        
+        // 执行后台任务
+        this.performBackgroundWork();
+        
+        return Service.START_STICKY;
+    }
+    
+    override onDestroy() : void {
+        super.onDestroy();
+        console.log("MyForegroundService", "onDestroy");
+        this.stopForeground(true);
+    }
+    
+    override onBind(intent : Intent) : IBinder | null {
+        return null;
+    }
+    
+    /**
+     * 创建通知渠道
+     */
+    private createNotificationChannel() : void {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            const channel = new NotificationChannel(
+                CHANNEL_ID,
+                "前台服务通道",
+                NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("用于前台服务的通知通道");
+            channel.setShowBadge(false);
+            channel.setSound(null, null);
+            channel.enableVibration(false);
+            
+            const manager = this.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager;
+            manager.createNotificationChannel(channel);
+        }
+    }
+    
+    /**
+     * 创建通知
+     */
+    private createNotification() : Notification {
+        // 创建点击通知时的 Intent
+        const notificationIntent = new Intent();
+        notificationIntent.setClassName(this, "io.dcloud.uniapp.UniAppActivity");
+        notificationIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        
+        const pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        
+        // 构建通知
+        const builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("应用正在运行")
+            .setContentText("前台服务 (TYPE_NONE) 运行中")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentIntent(pendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setSound(null)
+            .setVibrate(null);
+        
+        return builder.build();
+    }
+    
+    /**
+     * 执行后台任务
+     */
+    private performBackgroundWork() : void {
+        // 在新线程中执行任务
+        new Thread(() => {
+            try {
+                console.log("MyForegroundService", "开始执行后台任务");
+                // 模拟一些工作
+                for (let i = 0; i < 10; i++) {
+                    Thread.sleep(1000);
+                    console.log("MyForegroundService", `后台任务进度: ${i + 1}/10`);
+                }
+                console.log("MyForegroundService", "后台任务完成");
+                
+                // 任务完成后可以选择停止服务
+                // this.stopSelf();
+            } catch (e : Exception) {
+                console.error("MyForegroundService", "后台任务出错", e);
+            }
+        }).start();
+    }
+}
+
+/**
+ * 前台服务管理器
+ */
+export class ForegroundServiceManager {
+    
+    /**
+     * 启动前台服务
+     */
+    static startService(context : Context) : boolean {
+        try {
+            const serviceIntent = new Intent(context, MyForegroundService::class.java);
+            serviceIntent.setAction("com.example.app.START_FOREGROUND_SERVICE");
+            
+            // Android 8.0+ 需要使用 startForegroundService
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // 使用 UTSAndroid.getAppContext() 获取应用上下文
+                UTSAndroid.getAppContext()!.startForegroundService(serviceIntent);
+            } else {
+                UTSAndroid.getAppContext()!.startService(serviceIntent);
+            }
+            
+            console.log("ForegroundServiceManager", "前台服务启动成功");
+            return true;
+        } catch (e : Exception) {
+            console.error("ForegroundServiceManager", "启动服务失败", e);
+            return false;
+        }
+    }
+    
+    /**
+     * 停止前台服务
+     */
+    static stopService(context : Context) : boolean {
+        try {
+            const serviceIntent = new Intent(context, MyForegroundService::class.java);
+            UTSAndroid.getAppContext()!.stopService(serviceIntent);
+            
+            console.log("ForegroundServiceManager", "前台服务停止成功");
+            return true;
+        } catch (e : Exception) {
+            console.error("ForegroundServiceManager", "停止服务失败", e);
+            return false;
+        }
+    }
+    
+    /**
+     * 检查服务是否正在运行
+     */
+    static isServiceRunning(context : Context) : boolean {
+        try {
+            const manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager;
+            const services = manager.getRunningServices(Int.MAX_VALUE);
+            
+            const serviceName = MyForegroundService::class.java.getName();
+            for (service in services) {
+                if (serviceName == service.service.getClassName()) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (e : Exception) {
+            console.error("ForegroundServiceManager", "检查服务状态失败", e);
+            return false;
+        }
+    }
+}
+
+/**
+ * 导出给 JS 使用的接口
+ */
+export function startForegroundService() : boolean {
+    return ForegroundServiceManager.startService(UTSAndroid.getAppContext()!);
+}
+
+export function stopForegroundService() : boolean {
+    return ForegroundServiceManager.stopService(UTSAndroid.getAppContext()!);
+}
+
+export function isForegroundServiceRunning() : boolean {
+    return ForegroundServiceManager.isServiceRunning(UTSAndroid.getAppContext()!);
+}
